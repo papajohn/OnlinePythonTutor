@@ -138,12 +138,11 @@ $(document).ready(function() {
     $('#executeBtn').attr('disabled', true);
     $("#pyOutputPane").hide();
 
-
     $.get(backend_script,
           {user_script : pyInputCodeMirror.getValue()},
           function(dataFromBackend) {
             var trace = dataFromBackend.trace;
-            
+
             // don't enter visualize mode if there are killer errors:
             if (!trace ||
                 (trace.length == 0) ||

@@ -1,0 +1,12 @@
+How to pull in upstream changes:
+
+$ git fetch upstream
+# Fetches any new changes from the original repo
+
+$ git merge upstream/master
+# Merges any changes fetched into your working files
+
+https://help.github.com/articles/fork-a-repo
+
+
+

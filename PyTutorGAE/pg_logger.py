@@ -13,7 +13,7 @@
 #
 # The above copyright notice and this permission notice shall be included
 # in all copies or substantial portions of the Software.
-# 
+#
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
 # OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 # MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -261,10 +261,7 @@ class PGLogger(bdb.Bdb):
           cur_name = cur_frame.f_code.co_name
 
           # special case for lambdas - grab their line numbers too (or not)
-          if cur_name == '<lambda>':
-            # Unicode lambda :)
-            cur_name = u"\u03BB" # + ':line' + str(cur_frame.f_code.co_firstlineno)
-          elif cur_name == '':
+          if cur_name == '':
             cur_name = 'unnamed function'
 
           # encode in a JSON-friendly format now, in order to prevent ill

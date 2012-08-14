@@ -1,6 +1,6 @@
 # Generates a JSON trace that is compatible with the js/pytutor.js frontend
 
-import sys, pg_logger, json
+import sys, pg_logger, json, os
 
 
 def json_finalizer(input_code, output_trace):
@@ -10,5 +10,5 @@ def json_finalizer(input_code, output_trace):
 
 
 for f in sys.argv[1:]:
-  pg_logger.exec_script_str(open(f).read(), json_finalizer)
-
+  fin = sys.stdin if f == "-" else open(f)
+  pg_logger.exec_script_str(fin.read(), json_finalizer)

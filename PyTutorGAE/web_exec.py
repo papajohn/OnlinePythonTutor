@@ -1,4 +1,4 @@
-# <INSERT YOUR VERSION OF PYTHON HERE AS A #! LINE>
+#!/usr/bin/python3
 
 # Minimal CGI script for Online Python Tutor (v3).
 

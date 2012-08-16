@@ -47,7 +47,7 @@ function enterEditMode() {
 var pyInputCodeMirror; // CodeMirror object that contains the input text
 
 function setCodeMirrorVal(dat) {
-  pyInputCodeMirror.setValue(dat);
+  pyInputCodeMirror.setValue(dat.rtrim() /* kill trailing spaces */);
 }
 
 
@@ -68,10 +68,15 @@ $(document).ready(function() {
   $(window).bind("hashchange", function(e) {
     appMode = $.bbq.getState('mode'); // assign this to the GLOBAL appMode
 
-    // globals defined in pytutor.js
-    preseededCode = $.bbq.getState('code');
+    preseededCode = $.bbq.getState('code'); // yuck, global!
+    var preseededMode = $.bbq.getState('mode');
 
-    if (!preseededCurInstr) { // TODO: kinda gross hack
+    if ($.bbq.getState('cumulative_mode') == 'true') {
+      $('#cumulativeMode').prop('checked', true);
+    }
+
+    // only bother with curInstr when we're visualizing ...
+    if (!preseededCurInstr && preseededMode == 'visualize') { // TODO: kinda gross hack
       preseededCurInstr = Number($.bbq.getState('curInstr'));
     }
 
@@ -85,9 +90,8 @@ $(document).ready(function() {
     if (!myVisualizer) {
       appMode = 'edit';
 
-      if (preseededCode) {
-        // if you've pre-seeded 'code' and 'curInstr' params in the URL hash,
-        // then punt for now ...
+      if (preseededCode && preseededMode == 'visualize') {
+        // punt for now ...
       }
       else {
         $.bbq.pushState({ mode: 'edit' }, 2 /* completely override other hash strings to keep URL clean */);
@@ -139,16 +143,17 @@ $(document).ready(function() {
     $("#pyOutputPane").hide();
 
     $.get(backend_script,
-          {user_script : pyInputCodeMirror.getValue()},
+          {user_script : pyInputCodeMirror.getValue(),
+           cumulative_mode: $('#cumulativeMode').prop('checked')},
           function(dataFromBackend) {
             var trace = dataFromBackend.trace;
 
             // don't enter visualize mode if there are killer errors:
             if (!trace ||
                 (trace.length == 0) ||
-                ((trace.length == 1) && trace[0].event == 'uncaught_exception')) {
+                (trace[trace.length - 1].event == 'uncaught_exception')) {
 
-              if (trace.length > 0) {
+              if (trace.length == 1) {
                 var errorLineNo = trace[0].line - 1; /* CodeMirror lines are zero-indexed */
                 if (errorLineNo !== undefined) {
                   // highlight the faulting line in pyInputCodeMirror
@@ -165,7 +170,7 @@ $(document).ready(function() {
                 alert(trace[0].exception_msg);
               }
               else {
-                alert("Whoa, unknown error! Please reload and try again.");
+                alert("Whoa, unknown error! Reload to try again, or report a bug to philip@pgbovine.net\n\n(Click the 'Generate URL' button to include a unique URL in your email bug report.)");
               }
 
               $('#executeBtn').html("Visualize execution");
@@ -385,5 +390,15 @@ $(document).ready(function() {
     }
   });
 
+  $('#genUrlBtn').bind('click', function() {
+    var urlStr = $.param.fragment(window.location.href,
+                                  {code: pyInputCodeMirror.getValue(),
+                                   curInstr: (appMode == 'visualize') ? myVisualizer.curInstr : 0,
+                                   mode: appMode,
+                                   cumulative_mode: $('#cumulativeMode').prop('checked')
+                                  },
+                                  2);
+    $('#urlOutput').val(urlStr);
+  });
 });
 

@@ -78,7 +78,7 @@ def filter_var_dict(d):
 
 class PGLogger(bdb.Bdb):
 
-    def __init__(self, finalizer_func):
+    def __init__(self, cumulative_mode, finalizer_func):
         bdb.Bdb.__init__(self)
         self.mainpyfile = ''
         self._wait_for_mainpyfile = 0
@@ -86,6 +86,11 @@ class PGLogger(bdb.Bdb):
         # a function that takes the output trace as a parameter and
         # processes it
         self.finalizer_func = finalizer_func
+
+        # if True, then displays ALL stack frames that have ever existed
+        # rather than only those currently on the stack (and their
+        # lexical parents)
+        self.cumulative_mode = cumulative_mode
 
         # each entry contains a dict with the information for a single
         # executed line
@@ -98,10 +103,20 @@ class PGLogger(bdb.Bdb):
         # Value: parent frame
         self.closures = {}
 
-        # List of frames to KEEP AROUND after the function exits,
-        # because nested functions were defined in those frames.
-        # ORDER matters for aesthetics.
+        # Key: frame object
+        # Value: monotonically increasing small ID, based on call order
+        self.frame_ordered_ids = {}
+        self.cur_frame_id = 1
+
+        # List of frames to KEEP AROUND after the function exits.
+        # If cumulative_mode is True, then keep ALL frames in
+        # zombie_frames; otherwise keep only frames where
+        # nested functions were defined within them.
         self.zombie_frames = []
+
+        # set of elements within zombie_frames that are also
+        # LEXICAL PARENTS of other frames
+        self.parent_frames_set = set()
 
         # all globals that ever appeared in the program, in the order in
         # which they appeared. note that this might be a superset of all
@@ -114,6 +129,10 @@ class PGLogger(bdb.Bdb):
         self.encoder = pg_encoder.ObjectEncoder()
 
         self.executed_script = None # Python script to be executed!
+
+
+    def get_frame_id(self, cur_frame):
+      return self.frame_ordered_ids[cur_frame]
 
 
     # Returns the (lexical) parent frame of the function that was called
@@ -148,19 +167,12 @@ class PGLogger(bdb.Bdb):
       return None
 
 
-    def get_zombie_frame_id(self, f):
-      # should be None unless this is a zombie frame
-      try:
-        # make the frame id's one-indexed for clarity
-        # (and to prevent possible confusion with None)
-        return self.zombie_frames.index(f) + 1
-      except ValueError:
-        pass
-      return None
-
-    def lookup_zombie_frame_by_id(self, idx):
-      # remember this is one-indexed
-      return self.zombie_frames[idx - 1]
+    def lookup_zombie_frame_by_id(self, frame_id):
+      # TODO: kinda inefficient
+      for e in self.zombie_frames:
+        if self.get_frame_id(e) == frame_id:
+          return e
+      assert False # should never get here
 
 
     # unused ...
@@ -227,6 +239,14 @@ class PGLogger(bdb.Bdb):
         self.encoder.reset_heap() # VERY VERY VERY IMPORTANT,
                                   # or else we won't properly capture heap object mutations in the trace!
 
+        if event_type == 'call':
+          assert top_frame not in self.frame_ordered_ids
+          self.frame_ordered_ids[top_frame] = self.cur_frame_id
+          self.cur_frame_id += 1
+
+          if self.cumulative_mode:
+            self.zombie_frames.append(top_frame)
+
 
         # only render zombie frames that are NO LONGER on the stack
         cur_stack_frames = [e[0] for e in self.stack]
@@ -242,15 +262,13 @@ class PGLogger(bdb.Bdb):
           ret = {}
 
 
-          # your immediate parent frame ID is parent_frame_id_list[0]
-          # and all other members are your further ancestors
           parent_frame_id_list = []
 
           f = cur_frame
           while True:
             p = self.get_parent_frame(f)
             if p:
-              pid = self.get_zombie_frame_id(p)
+              pid = self.get_frame_id(p)
               assert pid
               parent_frame_id_list.append(pid)
               f = p
@@ -296,7 +314,7 @@ class PGLogger(bdb.Bdb):
             if type(v) in (types.FunctionType, types.MethodType):
               try:
                 enclosing_frame = self.closures[v]
-                enclosing_frame_id = self.get_zombie_frame_id(enclosing_frame)
+                enclosing_frame_id = self.get_frame_id(enclosing_frame)
                 self.encoder.set_function_parent_frame_ID(encoded_val, enclosing_frame_id)
               except KeyError:
                 pass
@@ -337,7 +355,8 @@ class PGLogger(bdb.Bdb):
             assert e in encoded_locals
 
           return dict(func_name=cur_name,
-                      frame_id=self.get_zombie_frame_id(cur_frame),
+                      is_parent=(cur_frame in self.parent_frames_set),
+                      frame_id=self.get_frame_id(cur_frame),
                       parent_frame_id_list=parent_frame_id_list,
                       encoded_locals=encoded_locals,
                       ordered_varnames=ordered_varnames)
@@ -352,6 +371,7 @@ class PGLogger(bdb.Bdb):
             if (type(v) in (types.FunctionType, types.MethodType) and \
                 v not in self.closures):
               self.closures[v] = top_frame
+              self.parent_frames_set.add(top_frame) # unequivocally add to this set!!!
               if not top_frame in self.zombie_frames:
                 self.zombie_frames.append(top_frame)
 
@@ -379,7 +399,7 @@ class PGLogger(bdb.Bdb):
           if type(v) in (types.FunctionType, types.MethodType):
             try:
               enclosing_frame = self.closures[v]
-              enclosing_frame_id = self.get_zombie_frame_id(enclosing_frame)
+              enclosing_frame_id = self.get_frame_id(enclosing_frame)
               self.encoder.set_function_parent_frame_ID(encoded_val, enclosing_frame_id)
             except KeyError:
               pass
@@ -399,56 +419,58 @@ class PGLogger(bdb.Bdb):
         # making it look aesthetically pretty
         stack_to_render = [];
 
-        # first push all regular stack entries BACKWARDS
+        # first push all regular stack entries
         if encoded_stack_locals:
-          stack_to_render = encoded_stack_locals[::-1]
-          for e in stack_to_render:
+          for e in encoded_stack_locals:
             e['is_zombie'] = False
             e['is_highlighted'] = False
+            stack_to_render.append(e)
 
-          stack_to_render[-1]['is_highlighted'] = True
+          # highlight the top-most active stack entry
+          stack_to_render[0]['is_highlighted'] = True
 
 
-        # zombie_encoded_stack_locals consists of exited functions that have returned
-        # nested functions. Push zombie stack entries at the BEGINNING of stack_to_render,
-        # EXCEPT put zombie entries BEHIND regular entries that are their parents
-        for e in zombie_encoded_stack_locals[::-1]:
+        # now push all zombie stack entries
+        for e in zombie_encoded_stack_locals:
           # don't display return value for zombie frames
+          # TODO: reconsider ...
+          '''
           try:
             e['ordered_varnames'].remove('__return__')
           except ValueError:
             pass
+          '''
 
           e['is_zombie'] = True
           e['is_highlighted'] = False # never highlight zombie entries
 
-          # j should be 0 most of the time, so we're always inserting new
-          # elements to the front of stack_to_render (which is why we are
-          # iterating backwards over zombie_stack_locals).
-          j = 0
-          while j < len(stack_to_render):
-            if stack_to_render[j]['frame_id'] in e['parent_frame_id_list']:
-              j += 1
-              continue
-            break
+          stack_to_render.append(e)
 
-          stack_to_render.insert(j, e)
+        # now sort by frame_id since that sorts frames in "chronological
+        # order" based on the order they were invoked
+        stack_to_render.sort(key=lambda e: e['frame_id'])
+
+
 
         # create a unique hash for this stack entry, so that the
         # frontend can uniquely identify it when doing incremental
         # rendering. the strategy is to use a frankenstein-like mix of the
         # relevant fields to properly disambiguate closures and recursive
-        # calls to the same function (stack_index is key for
-        # disambiguating recursion!)
-        for (stack_index, e) in enumerate(stack_to_render):
+        # calls to the same function
+        for e in stack_to_render:
           hash_str = e['func_name']
-          if e['frame_id']:
-            hash_str += '_f' + str(e['frame_id'])
-          if e['parent_frame_id_list']:
-            hash_str += '_p' + '_'.join([str(i) for i in e['parent_frame_id_list']])
+          # frame_id is UNIQUE, so it can disambiguate recursive calls
+          hash_str += '_f' + str(e['frame_id'])
+
+          # needed to refresh GUI display ...
+          if e['is_parent']:
+            hash_str += '_p'
+
+          # TODO: this is no longer needed, right? (since frame_id is unique)
+          #if e['parent_frame_id_list']:
+          #  hash_str += '_p' + '_'.join([str(i) for i in e['parent_frame_id_list']])
           if e['is_zombie']:
             hash_str += '_z'
-          hash_str += '_i' + str(stack_index)
 
           e['unique_hash'] = hash_str
 
@@ -458,8 +480,6 @@ class PGLogger(bdb.Bdb):
                            func_name=tos[0].f_code.co_name,
                            globals=encoded_globals,
                            ordered_globals=ordered_globals,
-                           #stack_locals=encoded_stack_locals,               # DEPRECATED in favor of stack_to_render
-                           #zombie_stack_locals=zombie_encoded_stack_locals, # DEPRECATED in favor of stack_to_render
                            stack_to_render=stack_to_render,
                            heap=self.encoder.get_heap(),
                            stdout=get_user_stdout(tos[0]))
@@ -577,8 +597,8 @@ class PGLogger(bdb.Bdb):
 
 
 # the MAIN meaty function!!!
-def exec_script_str(script_str, finalizer_func):
-  logger = PGLogger(finalizer_func)
+def exec_script_str(script_str, cumulative_mode, finalizer_func):
+  logger = PGLogger(cumulative_mode, finalizer_func)
 
   try:
     logger._runscript(script_str)

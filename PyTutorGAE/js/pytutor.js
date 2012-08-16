@@ -27,6 +27,23 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
 
+/* To import, put this at the top of your HTML page:
+
+<!-- requirements for pytutor.js -->
+<script type="text/javascript" src="js/d3.v2.min.js"></script>
+<script type="text/javascript" src="js/jquery-1.6.min.js"></script>
+<script type="text/javascript" src="js/jquery.ba-bbq.min.js"></script> <!-- for handling back button and URL hashes -->
+<script type="text/javascript" src="js/jquery.jsPlumb-1.3.10-all-min.js "></script> <!-- for rendering SVG connectors -->
+<script type="text/javascript" src="js/jquery-ui-1.8.21.custom.min.js"></script> <!-- for sliders and other UI elements -->
+<link type="text/css" href="css/ui-lightness/jquery-ui-1.8.21.custom.css" rel="stylesheet" />
+
+<script type="text/javascript" src="js/pytutor.js"></script>
+<link rel="stylesheet" href="css/pytutor.css"/>
+
+*/
+
+
+
 var curVisualizerID = 1; // global to uniquely identify each ExecutionVisualizer instance
 
 // domRootID is the string ID of the root element where to render this instance
@@ -34,11 +51,13 @@ var curVisualizerID = 1; // global to uniquely identify each ExecutionVisualizer
 //   code  - string of executed code
 //   trace - a full execution trace
 // params contains optional parameters, such as:
-//   startingInstruction - the (one-indexed) execution point to display upon rendering
+//   jumpToEnd - if non-null, jump to the very end of execution
+//   startingInstruction - the (zero-indexed) execution point to display upon rendering
 //   hideOutput - hide "Program output" and "Generate URL" displays
 //   codeDivHeight - maximum height of #pyCodeOutputDiv (in pixels)
+//   editCodeBaseURL - the base URL to visit when the user clicks 'Edit code'
 function ExecutionVisualizer(domRootID, dat, params) {
-  this.curInputCode = dat.code;
+  this.curInputCode = dat.code.rtrim(); // kill trailing spaces
   this.curTrace = dat.trace;
 
   this.curInstr = 0;
@@ -124,11 +143,11 @@ ExecutionVisualizer.prototype.render = function() {
         <center>\
           <div id="pyCodeOutputDiv"/>\
           <div id="editCodeLinkDiv">\
-            <button id="editBtn" class="medBtn" type="button">Edit code</button>\
+            <a id="editBtn">Edit code</a>\
           </div>\
           <div id="executionSliderCaption">\
             Click here to focus and then use the left and right arrow keys to<br/>\
-            step through execution. Click on lines of code to set breakpoints.\
+            step through execution. Click on lines of code to set/unset breakpoints.\
           </div>\
           <div id="executionSlider"/>\
           <div id="executionSliderFooter"/>\
@@ -144,7 +163,6 @@ ExecutionVisualizer.prototype.render = function() {
         <div id="progOutputs">\
         Program output:<br/>\
         <textarea id="pyStdout" cols="50" rows="13" wrap="off" readonly></textarea>\
-        <p><button id="genUrlBtn" class="smallBtn" type="button">Generate URL</button> <input type="text" id="urlOutput" size="60"/></p>\
         </div>\
       </td>\
       <td valign="top">\
@@ -171,6 +189,18 @@ ExecutionVisualizer.prototype.render = function() {
   </table>');
 
 
+  if (this.params.editCodeBaseURL) {
+    var urlStr = $.param.fragment(this.params.editCodeBaseURL,
+                                  {code: this.curInputCode},
+                                  2);
+    this.domRoot.find('#editBtn').attr('href', urlStr);
+  }
+  else {
+    this.domRoot.find('#editBtn').attr('href', "#");
+    this.domRoot.find('#editBtn').click(function(){return false;}); // DISABLE the link!
+  }
+
+
   // create a persistent globals frame
   // (note that we need to keep #globals_area separate from #stack for d3 to work its magic)
   this.domRoot.find("#globals_area").append('<div class="stackFrame" id="'
@@ -188,14 +218,6 @@ ExecutionVisualizer.prototype.render = function() {
     this.domRoot.find('#progOutputs').hide();
   }
 
-  this.domRoot.find('#genUrlBtn').bind('click', function() {
-    var urlStr = $.param.fragment(window.location.href,
-                                  {code: myViz.curInputCode, curInstr: myViz.curInstr},
-                                  2);
-    myViz.domRoot.find('#urlOutput').val(urlStr);
-  });
-
-
   this.domRoot.find("#jmpFirstInstr").click(function() {
     myViz.curInstr = 0;
     myViz.updateOutput();
@@ -207,17 +229,11 @@ ExecutionVisualizer.prototype.render = function() {
   });
 
   this.domRoot.find("#jmpStepBack").click(function() {
-    if (myViz.curInstr > 0) {
-      myViz.curInstr -= 1;
-      myViz.updateOutput();
-    }
+    myViz.stepBack();
   });
 
   this.domRoot.find("#jmpStepFwd").click(function() {
-    if (myViz.curInstr < myViz.curTrace.length - 1) {
-      myViz.curInstr += 1;
-      myViz.updateOutput();
-    }
+    myViz.stepForward();
   });
 
   // disable controls initially ...
@@ -270,9 +286,13 @@ ExecutionVisualizer.prototype.render = function() {
 
 
   if (this.params && this.params.startingInstruction) {
-    assert(1 <= this.params.startingInstruction &&
-           this.params.startingInstruction <= this.curTrace.length);
-    this.curInstr = (this.params.startingInstruction - 1); // convert to zero-indexed
+    assert(0 <= this.params.startingInstruction &&
+           this.params.startingInstruction < this.curTrace.length);
+    this.curInstr = this.params.startingInstruction;
+  }
+
+  if (this.params.jumpToEnd) {
+    this.curInstr = this.curTrace.length - 1;
   }
 
 
@@ -288,58 +308,109 @@ ExecutionVisualizer.prototype.render = function() {
 };
 
 
+// find the previous/next breakpoint to c or return -1 if it doesn't exist
+ExecutionVisualizer.prototype.findPrevBreakpoint = function() {
+  var myViz = this;
+  var c = myViz.curInstr;
+
+  if (myViz.sortedBreakpointsList.length == 0) {
+    return -1;
+  }
+  else {
+    for (var i = 1; i < myViz.sortedBreakpointsList.length; i++) {
+      var prev = myViz.sortedBreakpointsList[i-1];
+      var cur = myViz.sortedBreakpointsList[i];
+      if (c <= prev)
+        return -1;
+      if (cur >= c)
+        return prev;
+    }
+
+    // final edge case:
+    var lastElt = myViz.sortedBreakpointsList[myViz.sortedBreakpointsList.length - 1];
+    return (lastElt < c) ? lastElt : -1;
+  }
+}
+
+ExecutionVisualizer.prototype.findNextBreakpoint = function() {
+  var myViz = this;
+  var c = myViz.curInstr;
+
+  if (myViz.sortedBreakpointsList.length == 0) {
+    return -1;
+  }
+  // usability hack: if you're currently on a breakpoint, then
+  // single-step forward to the next execution point, NOT the next
+  // breakpoint. it's often useful to see what happens when the line
+  // at a breakpoint executes.
+  else if ($.inArray(c, myViz.sortedBreakpointsList) >= 0) {
+    return c + 1;
+  }
+  else {
+    for (var i = 0; i < myViz.sortedBreakpointsList.length - 1; i++) {
+      var cur = myViz.sortedBreakpointsList[i];
+      var next = myViz.sortedBreakpointsList[i+1];
+      if (c < cur)
+        return cur;
+      if (cur <= c && c < next) // subtle
+        return next;
+    }
+
+    // final edge case:
+    var lastElt = myViz.sortedBreakpointsList[myViz.sortedBreakpointsList.length - 1];
+    return (lastElt > c) ? lastElt : -1;
+  }
+}
+
+
+// returns true if action successfully taken
+ExecutionVisualizer.prototype.stepForward = function() {
+  var myViz = this;
+
+  if (myViz.curInstr < myViz.curTrace.length - 1) {
+    // if there is a next breakpoint, then jump to it ...
+    if (myViz.sortedBreakpointsList.length > 0) {
+      var nextBreakpoint = myViz.findNextBreakpoint();
+      if (nextBreakpoint != -1)
+        myViz.curInstr = nextBreakpoint;
+      else
+        myViz.curInstr += 1; // prevent "getting stuck" on a solitary breakpoint
+    }
+    else {
+      myViz.curInstr += 1;
+    }
+    myViz.updateOutput();
+    return true;
+  }
+
+  return false;
+}
+
+// returns true if action successfully taken
+ExecutionVisualizer.prototype.stepBack = function() {
+  var myViz = this;
+
+  if (myViz.curInstr > 0) {
+    // if there is a prev breakpoint, then jump to it ...
+    if (myViz.sortedBreakpointsList.length > 0) {
+      var prevBreakpoint = myViz.findPrevBreakpoint();
+      if (prevBreakpoint != -1)
+        myViz.curInstr = prevBreakpoint;
+      else
+        myViz.curInstr -= 1; // prevent "getting stuck" on a solitary breakpoint
+    }
+    else {
+      myViz.curInstr -= 1;
+    }
+    myViz.updateOutput();
+    return true;
+  }
+
+  return false;
+}
 
 ExecutionVisualizer.prototype.setKeyboardBindings = function() {
   var myViz = this; // to prevent confusion of 'this' inside of nested functions
-
-  // find the previous/next breakpoint to c or return -1 if it doesn't exist
-  function findPrevBreakpoint(c) {
-    if (myViz.sortedBreakpointsList.length == 0) {
-      return -1;
-    }
-    else {
-      for (var i = 1; i < myViz.sortedBreakpointsList.length; i++) {
-        var prev = myViz.sortedBreakpointsList[i-1];
-        var cur = myViz.sortedBreakpointsList[i];
-        if (c <= prev)
-          return -1;
-        if (cur >= c)
-          return prev;
-      }
-
-      // final edge case:
-      var lastElt = myViz.sortedBreakpointsList[myViz.sortedBreakpointsList.length - 1];
-      return (lastElt < c) ? lastElt : -1;
-    }
-  }
-
-  function findNextBreakpoint(c) {
-    if (myViz.sortedBreakpointsList.length == 0) {
-      return -1;
-    }
-    // usability hack: if you're currently on a breakpoint, then
-    // single-step forward to the next execution point, NOT the next
-    // breakpoint. it's often useful to see what happens when the line
-    // at a breakpoint executes.
-    else if ($.inArray(c, myViz.sortedBreakpointsList) >= 0) {
-      return c + 1;
-    }
-    else {
-      for (var i = 0; i < myViz.sortedBreakpointsList.length - 1; i++) {
-        var cur = myViz.sortedBreakpointsList[i];
-        var next = myViz.sortedBreakpointsList[i+1];
-        if (c < cur)
-          return cur;
-        if (cur <= c && c < next) // subtle
-          return next;
-      }
-
-      // final edge case:
-      var lastElt = myViz.sortedBreakpointsList[myViz.sortedBreakpointsList.length - 1];
-      return (lastElt > c) ? lastElt : -1;
-    }
-  }
-
 
 
   // Set keyboard event listeners for td#left_pane. Note that it must
@@ -353,39 +424,13 @@ ExecutionVisualizer.prototype.setKeyboardBindings = function() {
   leftTablePane.keydown(function(k) {
     if (!myViz.keyStuckDown) {
       if (k.keyCode == 37) { // left arrow
-        if (myViz.curInstr > 0) {
-          // if there is a prev breakpoint, then jump to it ...
-          if (myViz.sortedBreakpointsList.length > 0) {
-            var prevBreakpoint = findPrevBreakpoint(myViz.curInstr);
-            if (prevBreakpoint != -1)
-              myViz.curInstr = prevBreakpoint;
-            else
-              myViz.curInstr -= 1; // prevent keyboard keys from "getting stuck" on a solitary breakpoint
-          }
-          else {
-            myViz.curInstr -= 1;
-          }
-          myViz.updateOutput();
-
+        if (myViz.stepBack()) {
           k.preventDefault(); // don't horizontally scroll the display
           myViz.keyStuckDown = true;
         }
       }
       else if (k.keyCode == 39) { // right arrow
-        if (myViz.curInstr < myViz.curTrace.length - 1) {
-          // if there is a next breakpoint, then jump to it ...
-          if (myViz.sortedBreakpointsList.length > 0) {
-            var nextBreakpoint = findNextBreakpoint(myViz.curInstr);
-            if (nextBreakpoint != -1)
-              myViz.curInstr = nextBreakpoint;
-            else
-              myViz.curInstr += 1; // prevent keyboard keys from "getting stuck" on a solitary breakpoint
-          }
-          else {
-            myViz.curInstr += 1;
-          }
-          myViz.updateOutput();
-
+        if (myViz.stepForward()) {
           k.preventDefault(); // don't horizontally scroll the display
           myViz.keyStuckDown = true;
         }
@@ -548,7 +593,7 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
     renderSliderBreakpoints();
   }
 
-  var lines = this.curInputCode.rtrim().split('\n');
+  var lines = this.curInputCode.split('\n');
 
   for (var i = 0; i < lines.length; i++) {
     var cod = lines[i];
@@ -647,8 +692,6 @@ ExecutionVisualizer.prototype.updateOutput = function() {
   var myViz = this; // to prevent confusion of 'this' inside of nested functions
 
   assert(this.curTrace);
-
-  this.domRoot.find('#urlOutput').val(''); // blank out
 
   var curEntry = this.curTrace[this.curInstr];
   var hasError = false;
@@ -783,6 +826,7 @@ ExecutionVisualizer.prototype.updateOutput = function() {
       var ST = codeOutputDiv.scrollTop();
       var H = codeOutputDiv.height();
 
+      codeOutputDiv.stop(); // first stop all previously-queued animations
       codeOutputDiv.animate({scrollTop: (ST + (LO - PO - (Math.round(H / 2))))}, 300);
     }
 
@@ -1624,9 +1668,9 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
       var funcName = htmlspecialchars(frame.func_name); // might contain '<' or '>' for weird names like <genexpr>
       var headerLabel = funcName + '()';
 
-      var frameID = frame.frame_id; // optional (btw, this isn't a CSS id)
-      if (frameID) {
-        headerLabel = 'f' + frameID + ': ' + headerLabel;
+      // only display if you're someone's parent
+      if (frame.is_parent) {
+        headerLabel = 'f' + frame.frame_id + ': ' + headerLabel;
       }
 
       // optional (btw, this isn't a CSS id)
@@ -1676,7 +1720,7 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
       var frame = d.frame;
 
       if (i == 0) {
-        if (varname == '__return__' && !frame.is_zombie)
+        if (varname == '__return__')
           $(this).html('<span class="retval">Return<br/>value</span>');
         else
           $(this).html(varname);

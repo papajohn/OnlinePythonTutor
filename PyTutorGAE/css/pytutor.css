@@ -28,7 +28,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 /*
-Color scheme ideas: 
+Color scheme ideas:
 
 Current scheme: pastel blue and yellow with a hint of red:
   http://colorschemedesigner.com/#3N32mmmuew0w0
@@ -108,20 +108,18 @@ table.frameDataViz td.val {
 div#pyCodeOutputDiv {
   max-width: 550px;
   max-height: 450px;
-  /*max-height: 620px;*/
   overflow: auto;
-  /*margin-bottom: 4px;*/
 }
 
 table#pyCodeOutput {
   font-family: Andale mono, monospace;
-  font-size:12pt;
-  line-height:1.1em;
+  font-size: 12pt;
+  line-height: 1.1em;
   border-spacing: 0px;
   border-top: 1px solid #999999;
   padding-top: 3px;
   border-bottom: 1px solid #999999;
-  margin-top: 6px;
+  margin: 6px auto; /* Center code in its pane */
 }
 
 /* don't wrap lines within code output ... FORCE scrollbars to appear */
@@ -148,14 +146,13 @@ table#pyCodeOutput .cod {
 
 div#editCodeLinkDiv {
   text-align: center;
-  margin-top: 12px;
-  margin-bottom: 4px;
+  margin: 12px auto;
 }
 
 #editCodeLinkOnError {
   color: #142B69;
+  font-size: 9px;
 }
-
 
 #errorOutput {
   background-color: #F87D76;
@@ -179,8 +176,9 @@ button.medBtn {
 /* VCR control buttons for stepping through execution */
 
 #vcrControls {
-  margin-top: 15px;
-  margin-bottom: 15px;
+  margin: 15px auto;
+  width: 100%;
+  text-align: center;
 }
 
 #vcrControls button {
@@ -194,7 +192,6 @@ button.medBtn {
   padding: 4px;
   font-family: Andale mono, monospace;
 }
-
 
 .vizFrame {
   margin-bottom: 20px;
@@ -393,9 +390,6 @@ table.instTbl td.instVal {
   vertical-align: center;
 }
 
-
-
-
 .typeLabel {
   font-size: 8pt;
   color: #222222;
@@ -534,99 +528,9 @@ div#heapHeader {
   font-size: 10pt;
 }
 
-
-/* styles for Online Python Tutor questions site */
-
-#questionsHeaderPane {
-  text-align: left;
-  margin-bottom: 15px;
-  width: 650px;
-  border-bottom: 1px solid #bbbbbb;
-}
-
-.questionsHeaderStmt {
-  margin-bottom: 5px;
-}
-
-.questionsHeaderTitle {
-  margin-bottom: 5px;
-  font-weight: bold;
-  font-size: 12pt;
-}
-
-#submittedCodeRO {
-  font-size: 10pt;
-  font-family: Andale mono, monospace;
-  padding: 4px;
-  margin-top: 5px;
-}
-
-table#gradeMatrix {
-  margin-top: 12px;
-}
-
-table#gradeMatrix thead {
-  font-weight: bold;
-  border: solid;
-}
-
-table#gradeMatrix thead td.statusCell {
-  padding-left: 18px; /* to line up with smiley faces */
-}
-
-table#gradeMatrix td.testInputCell,
-table#gradeMatrix td.testOutputCell {
-  padding-right: 25px;
-  padding-bottom: 10px;
-  vertical-align: middle;
-}
-
-table#gradeMatrix tbody td.statusCell,
-table#gradeMatrix tbody td.expectedCell {
-  padding-left: 12px;
-  padding-bottom: 10px;
-  vertical-align: middle;
-}
- 
-td.testInputVarnameCell,
-td.testOutputVarnameCell {
-  padding-right: 2px;
-  text-align: right;
-}
-
-td.testInputValCell,
-td.testOutputValCell {
-  padding-right: 5px;
-}
-
-pre#submittedCodePRE {
-  font-size: 10pt;
-  font-family: Andale mono, monospace;
-  background-color: #dddddd;
-  padding: 5px;
-}
-
-div#submittedSolutionDisplay {
-  width: 650px; /* to line up with questionsHeaderPane */
-  text-align: left;
-  font-size: 12pt;
-  margin-bottom: 20px;
-}
-
-#gradeSummary {
-  margin-top: 12px;
-}
-
-#pyGradingPane {
-  margin-bottom: 20px;
-}
-
-
 #executionSlider {
-  /*width: 900px;*/
-  width: 500px;
-  margin-top: 10px;
-  margin-bottom: 5px;
+  width: 100%;
+  margin: 6px auto;
 }
 
 #executionSliderCaption {

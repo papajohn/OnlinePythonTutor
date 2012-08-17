@@ -42,7 +42,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 */
 
-
+FN = 'func'
 
 var curVisualizerID = 1; // global to uniquely identify each ExecutionVisualizer instance
 
@@ -140,29 +140,21 @@ ExecutionVisualizer.prototype.render = function() {
   '<table border="0" class="visualizer">\
     <tr>\
       <td valign="top" id="left_pane">\
-        <center>\
+        <div class="left">\
           <div id="pyCodeOutputDiv"/>\
           <div id="editCodeLinkDiv">\
             <a id="editBtn">Edit code</a>\
           </div>\
-          <div id="executionSliderCaption">\
-            Click here to focus and then use the left and right arrow keys to<br/>\
-            step through execution. Click on lines of code to set/unset breakpoints.\
-          </div>\
           <div id="executionSlider"/>\
           <div id="executionSliderFooter"/>\
           <div id="vcrControls">\
-            <button id="jmpFirstInstr", type="button">&lt;&lt; First</button>\
             <button id="jmpStepBack", type="button">&lt; Back</button>\
             <span id="curInstr">Step ? of ?</span>\
             <button id="jmpStepFwd", type="button">Forward &gt;</button>\
-            <button id="jmpLastInstr", type="button">Last &gt;&gt;</button>\
           </div>\
           <div id="errorOutput"/>\
-        </center>\
-        <div id="progOutputs">\
-        Program output:<br/>\
-        <textarea id="pyStdout" cols="50" rows="13" wrap="off" readonly></textarea>\
+          <div id="progOutputs">\
+          </div>\
         </div>\
       </td>\
       <td valign="top">\
@@ -171,14 +163,12 @@ ExecutionVisualizer.prototype.render = function() {
             <tr>\
               <td id="stack_td">\
                 <div id="globals_area">\
-                  <div id="stackHeader">Frames</div>\
                 </div>\
                 <div id="stack">\
                 </div>\
               </td>\
               <td id="heap_td">\
                 <div id="heap">\
-                  <div id="heapHeader">Objects</div>\
                 </div>\
               </td>\
             </tr>\
@@ -205,7 +195,7 @@ ExecutionVisualizer.prototype.render = function() {
   // (note that we need to keep #globals_area separate from #stack for d3 to work its magic)
   this.domRoot.find("#globals_area").append('<div class="stackFrame" id="'
     + myViz.generateID('globals') + '"><div id="' + myViz.generateID('globals_header')
-    + '" class="stackFrameHeader">Global variables</div><table class="stackFrameVarTable" id="'
+    + '" class="stackFrameHeader">Global frame</div><table class="stackFrameVarTable" id="'
     + myViz.generateID('global_table') + '"></table></div>');
 
 
@@ -214,19 +204,11 @@ ExecutionVisualizer.prototype.render = function() {
   }
 
 
-  if (this.params && this.params.hideOutput) {
-    this.domRoot.find('#progOutputs').hide();
+  if (!this.params || this.params.hideOutput != true) {
+    this.domRoot.find('#progOutputs').html(
+      'Program output:<br/>\
+      <textarea id="pyStdout" cols="40" rows="6" wrap="off" readonly></textarea>')
   }
-
-  this.domRoot.find("#jmpFirstInstr").click(function() {
-    myViz.curInstr = 0;
-    myViz.updateOutput();
-  });
-
-  this.domRoot.find("#jmpLastInstr").click(function() {
-    myViz.curInstr = myViz.curTrace.length - 1;
-    myViz.updateOutput();
-  });
 
   this.domRoot.find("#jmpStepBack").click(function() {
     myViz.stepBack();
@@ -241,8 +223,6 @@ ExecutionVisualizer.prototype.render = function() {
   this.domRoot.find("#vcrControls #jmpStepBack").attr("disabled", true);
   this.domRoot.find("#vcrControls #jmpStepFwd").attr("disabled", true);
   this.domRoot.find("#vcrControls #jmpLastInstr").attr("disabled", true);
-
-
 
   // must postprocess curTrace prior to running precomputeCurTraceLayouts() ...
   var lastEntry = this.curTrace[this.curTrace.length - 1];
@@ -420,7 +400,7 @@ ExecutionVisualizer.prototype.setKeyboardBindings = function() {
 
   leftTablePane.attr('tabindex', '0');
   leftTablePane.css('outline', 'none'); // don't display a tacky border when focused
- 
+
   leftTablePane.keydown(function(k) {
     if (!myViz.keyStuckDown) {
       if (k.keyCode == 37) { // left arrow
@@ -611,7 +591,7 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
       }
     });
 
- 
+
     // if there is a comment containing 'breakpoint' and this line was actually executed,
     // then set a breakpoint on this line
     var breakpointInComment = false;
@@ -855,15 +835,16 @@ ExecutionVisualizer.prototype.updateOutput = function() {
 
 
   // render stdout:
+  var stdout = myViz.domRoot.find("#pyStdout");
+  if (stdout.length > 0) {
+    // keep original horizontal scroll level:
+    var oldLeft = stdout.scrollLeft();
+    stdout.val(curEntry.stdout);
 
-  // keep original horizontal scroll level:
-  var oldLeft = myViz.domRoot.find("#pyStdout").scrollLeft();
-  myViz.domRoot.find("#pyStdout").val(curEntry.stdout);
-
-  myViz.domRoot.find("#pyStdout").scrollLeft(oldLeft);
-  // scroll to bottom, though:
-  myViz.domRoot.find("#pyStdout").scrollTop(myViz.domRoot.find("#pyStdout")[0].scrollHeight);
-
+    stdout.scrollLeft(oldLeft);
+    // scroll to bottom, though:
+    stdout.scrollTop(stdout[0].scrollHeight);
+  }
 
   // finally, render all of the data structures
   this.renderDataStructures();
@@ -912,7 +893,7 @@ ExecutionVisualizer.prototype.precomputeCurTraceLayouts = function() {
 
   var myViz = this; // to prevent confusion of 'this' inside of nested functions
 
- 
+
   $.each(this.curTrace, function(i, curEntry) {
     var prevLayout = myViz.curTraceLayouts[myViz.curTraceLayouts.length - 1];
 
@@ -1508,10 +1489,10 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
       var parentFrameID = obj[2]; // optional
 
       if (parentFrameID) {
-        d3DomElement.append('<div class="funcObj">function ' + funcName + ' [parent=f'+ parentFrameID + ']</div>');
+        d3DomElement.append('<div class="funcObj">' + FN + ' ' + funcName + ' [parent=f'+ parentFrameID + ']</div>');
       }
       else {
-        d3DomElement.append('<div class="funcObj">function ' + funcName + '</div>');
+        d3DomElement.append('<div class="funcObj">' + FN + ' ' + funcName + '</div>');
       }
     }
     else {
@@ -1557,7 +1538,7 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
     .data(realGlobalsLst, function(d) {
       return d[0]; // use variable name as key
     });
-    
+
 
   // ENTER
   globalsD3.enter()
@@ -1703,7 +1684,7 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
   stackVarTable
     .enter()
     .append('tr');
-  
+
 
   var stackVarTableCells = stackVarTable
     .selectAll('td.stackFrameVar,td.stackFrameValue')

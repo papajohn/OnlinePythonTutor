@@ -72,9 +72,9 @@ function ExecutionVisualizer(domRootID, dat, params) {
   // cool, we can create a separate jsPlumb instance for each visualization:
   this.jsPlumbInstance = jsPlumb.getInstance({
     Endpoint: ["Dot", {radius:3}],
-    EndpointStyles: [{fillStyle: darkBlue}, {fillstyle: null} /* make right endpoint invisible */],
+    EndpointStyles: [{fillStyle: connectorBaseColor}, {fillstyle: null} /* make right endpoint invisible */],
     Anchors: ["RightMiddle", "LeftMiddle"],
-    PaintStyle: {lineWidth:1, strokeStyle: darkBlue},
+    PaintStyle: {lineWidth:1, strokeStyle: connectorBaseColor},
 
     // bezier curve style:
     //Connector: [ "Bezier", { curviness:15 }], /* too much 'curviness' causes lines to run together */
@@ -83,8 +83,8 @@ function ExecutionVisualizer(domRootID, dat, params) {
     // state machine curve style:
     Connector: [ "StateMachine" ],
     Overlays: [[ "Arrow", { length: 10, width:7, foldback:0.55, location:1 }]],
-    EndpointHoverStyles: [{fillStyle: pinkish}, {fillstyle: null} /* make right endpoint invisible */],
-    HoverPaintStyle: {lineWidth:2, strokeStyle: pinkish},
+    EndpointHoverStyles: [{fillStyle: connectorHighlightColor}, {fillstyle: null} /* make right endpoint invisible */],
+    HoverPaintStyle: {lineWidth: 1, strokeStyle: connectorHighlightColor},
   });
 
 
@@ -523,7 +523,10 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
 
     myViz.hoverBreakpoints = d3.map();
     $.each(exePts, function(i, ep) {
-      myViz.hoverBreakpoints.set(ep, 1);
+      // don't add redundant entries
+      if (!myViz.breakpoints.has(ep)) {
+        myViz.hoverBreakpoints.set(ep, 1);
+      }
     });
 
     addToBreakpoints(exePts);
@@ -541,6 +544,11 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
     }
 
     addToBreakpoints(exePts);
+
+    // remove from hoverBreakpoints so that slider display immediately changes color
+    $.each(exePts, function(i, ep) {
+      myViz.hoverBreakpoints.remove(ep);
+    });
 
     d3.select(t.parentNode).select('td.lineNo').style('color', breakpointColor);
     d3.select(t.parentNode).select('td.lineNo').style('font-weight', 'bold');
@@ -762,7 +770,7 @@ ExecutionVisualizer.prototype.updateOutput = function() {
       .style('background-color', function(d) {
         if (d.lineNumber == curEntry.line) {
           d.backgroundColor = hasError ? errorColor :
-                                         (isTerminated ?  lightBlue : lightLineColor);
+                                         (isTerminated ?  terminatedLineColor : highlightedLineColor);
         }
         else {
           d.backgroundColor = null;
@@ -772,7 +780,7 @@ ExecutionVisualizer.prototype.updateOutput = function() {
       })
       .style('border-top', function(d) {
         if ((d.lineNumber == curEntry.line) && !hasError && !isTerminated) {
-          return '1px solid ' + errorColor;
+          return '1px solid ' + highlightedLineTopBorderColor;
         }
         else {
           // put a default white top border to keep space usage consistent
@@ -1513,6 +1521,35 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
   // Render globals and then stack frames using d3:
 
 
+  function highlightAliasedConnectors(d, i) {
+    // if this row contains a stack pointer, then highlight its arrow and
+    // ALL aliases that also point to the same heap object
+    var stackPtrId = $(this).find('div.stack_pointer').attr('id');
+    if (stackPtrId) {
+      var foundTargetId = null;
+      myViz.jsPlumbInstance.select({source: stackPtrId}).each(function(c) {foundTargetId = c.targetId;});
+
+      // use foundTargetId to highlight ALL ALIASES
+      myViz.jsPlumbInstance.select().each(function(c) {
+        if (c.targetId == foundTargetId) {
+          c.setHover(true);
+          $(c.canvas).css("z-index", 2000); // ... and move it to the VERY FRONT
+        }
+        else {
+          c.setHover(false);
+        }
+      });
+    }
+  }
+
+  function unhighlightAllConnectors(d, i) {
+    myViz.jsPlumbInstance.select().each(function(c) {
+      c.setHover(false);
+    });
+  }
+
+
+
   // render all global variables IN THE ORDER they were created by the program,
   // in order to ensure continuity:
 
@@ -1543,6 +1580,8 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
   // ENTER
   globalsD3.enter()
     .append('tr')
+    .on('mouseover', highlightAliasedConnectors)
+    .on('mouseout',  unhighlightAllConnectors)
     .selectAll('td.stackFrameVar,td.stackFrameValue')
     .data(function(d, i){return d;}) /* map varname down both columns */
     .enter()
@@ -1587,7 +1626,7 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
             // make sure varname doesn't contain any weird
             // characters that are illegal for CSS ID's ...
             var varDivID = myViz.generateID('global__' + varnameToCssID(varname));
-            $(this).append('<div id="' + varDivID + '">&nbsp;</div>');
+            $(this).append('<div class="stack_pointer" id="' + varDivID + '">&nbsp;</div>');
 
             assert(!connectionEndpointIDs.has(varDivID));
             var heapObjID = myViz.generateID('heap_object_' + getRefID(val));
@@ -1683,8 +1722,9 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
 
   stackVarTable
     .enter()
-    .append('tr');
-
+    .append('tr')
+    .on('mouseover', highlightAliasedConnectors)
+    .on('mouseout',  unhighlightAllConnectors);
 
   var stackVarTableCells = stackVarTable
     .selectAll('td.stackFrameVar,td.stackFrameValue')
@@ -1734,7 +1774,7 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
             // characters that are illegal for CSS ID's ...
             var varDivID = myViz.generateID(varnameToCssID(frame.unique_hash + '__' + varname));
 
-            $(this).append('<div id="' + varDivID + '">&nbsp;</div>');
+            $(this).append('<div class="stack_pointer" id="' + varDivID + '">&nbsp;</div>');
 
             assert(!connectionEndpointIDs.has(varDivID));
             var heapObjID = myViz.generateID('heap_object_' + getRefID(val));
@@ -1791,8 +1831,8 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
       // if this connector starts in the selected stack frame ...
       if (stackFrameDiv.attr('id') == frameID) {
         // then HIGHLIGHT IT!
-        c.setPaintStyle({lineWidth:1, strokeStyle: darkBlue});
-        c.endpoints[0].setPaintStyle({fillStyle: darkBlue});
+        c.setPaintStyle({lineWidth:1, strokeStyle: connectorBaseColor});
+        c.endpoints[0].setPaintStyle({fillStyle: connectorBaseColor});
         //c.endpoints[1].setVisible(false, true, true); // JUST set right endpoint to be invisible
 
         $(c.canvas).css("z-index", 1000); // ... and move it to the VERY FRONT
@@ -1803,8 +1843,8 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
       }
       else {
         // else unhighlight it
-        c.setPaintStyle({lineWidth:1, strokeStyle: lightGray});
-        c.endpoints[0].setPaintStyle({fillStyle: lightGray});
+        c.setPaintStyle({lineWidth:1, strokeStyle: connectorInactiveColor});
+        c.endpoints[0].setPaintStyle({fillStyle: connectorInactiveColor});
         //c.endpoints[1].setVisible(false, true, true); // JUST set right endpoint to be invisible
 
         $(c.canvas).css("z-index", 0);
@@ -1843,23 +1883,25 @@ ExecutionVisualizer.prototype.redrawConnectors = function() {
 // Utilities
 
 
-/* colors - see pytutor.css */
-var lightYellow = '#F5F798';
-var lightLineColor = '#FFFFCC';
-var errorColor = '#F87D76';
-var visitedLineColor = '#3D58A2';
+/* colors - see pytutor.css for more colors */
 
-var lightGray = "#cccccc";
-var darkBlue = "#3D58A2";
-var medBlue = "#41507A";
-var medLightBlue = "#6F89D1";
-var lightBlue = "#899CD1";
-var pinkish = "#F15149";
-var lightPink = "#F89D99";
-var darkRed = "#9D1E18";
+var highlightedLineColor = '#e4faeb';
+var highlightedLineTopBorderColor = '#005583';
 
-var breakpointColor = pinkish;
-var hoverBreakpointColor = medLightBlue;
+var visitedLineColor = highlightedLineTopBorderColor;
+
+var terminatedLineColor = '#a2eebd';
+
+var darkRed = '#d03939';
+
+var connectorBaseColor = '#005583';
+var connectorHighlightColor = darkRed;
+var connectorInactiveColor = '#cccccc';
+
+var errorColor = darkRed;
+
+var breakpointColor = darkRed;
+var hoverBreakpointColor = connectorBaseColor;
 
 
 function assert(cond) {

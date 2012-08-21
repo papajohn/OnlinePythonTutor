@@ -56,7 +56,9 @@ $(document).ready(function() {
   pyInputCodeMirror = CodeMirror(document.getElementById('codeInputPane'), {
     mode: 'python',
     lineNumbers: true,
-    tabSize: 2
+    tabSize: 2,
+    // convert tab into two spaces:
+    extraKeys: {Tab: function(cm) {cm.replaceSelection("  ", "end");}}
   });
 
   pyInputCodeMirror.setSize(null, '450px');
@@ -291,6 +293,11 @@ $(document).ready(function() {
 
   $("#pwTryFinallyLink").click(function() {
     $.get("example-code/wentworth_try_finally.txt", setCodeMirrorVal);
+    return false;
+  });
+
+  $("#sumCubesLink").click(function() {
+    $.get("example-code/sum-cubes.txt", setCodeMirrorVal);
     return false;
   });
 

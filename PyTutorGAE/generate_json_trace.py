@@ -3,10 +3,13 @@
 import sys, pg_logger, json, os
 from optparse import OptionParser
 
+COMPACT = True
+INDENT_LEVEL=None if COMPACT else 2
+
 
 def json_finalizer(input_code, output_trace):
   ret = dict(code=input_code, trace=output_trace)
-  json_output = json.dumps(ret, indent=None) # use indent=None for most compact repr
+  json_output = json.dumps(ret, indent=INDENT_LEVEL)
   print(json_output)
 
 

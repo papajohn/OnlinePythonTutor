@@ -448,6 +448,7 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
 
 
   function renderSliderBreakpoints() {
+    return; // Disable slider breakpoints
     myViz.domRoot.find("#executionSliderFooter").empty();
 
     // I originally didn't want to delete and re-create this overlay every time,

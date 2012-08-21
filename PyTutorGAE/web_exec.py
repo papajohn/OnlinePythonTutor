@@ -18,6 +18,7 @@ def cgi_finalizer(input_code, output_trace):
 
 if len(sys.argv) > 1:
   user_script = open(sys.argv[1]).read()
+  cumulative_mode = False
 else:
   form = cgi.FieldStorage()
   user_script = form['user_script'].value

@@ -1,0 +1,20 @@
+def average(x, y):
+    return (x + y)/2
+
+def improve(update, isclose, guess=1):
+    while not isclose(guess):
+        guess = update(guess)
+    return guess
+
+def approx_eq(x, y, tolerance=1e-5):
+    return abs(x - y) < tolerance
+
+def square_root(x):
+    def sqrt_update(guess):
+        return average(guess, x/guess)
+    def test(guess):
+        return approx_eq(guess * guess, x)
+    return improve(sqrt_update, test)
+
+square_root(256)
+

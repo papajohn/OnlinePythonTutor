@@ -43,6 +43,14 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
 FN = 'func'
+globalJSPlumbs = []
+
+function globalRepaintEverything() {
+  var ii = globalJSPlumbs.length
+  for (i = 0; i < ii; i++) {
+    globalJSPlumbs[i].repaintEverything();
+  }
+}
 
 var curVisualizerID = 1; // global to uniquely identify each ExecutionVisualizer instance
 
@@ -86,6 +94,9 @@ function ExecutionVisualizer(domRootID, dat, params) {
     EndpointHoverStyles: [{fillStyle: connectorHighlightColor}, {fillstyle: null} /* make right endpoint invisible */],
     HoverPaintStyle: {lineWidth: 1, strokeStyle: connectorHighlightColor},
   });
+
+  // Add it to a global list, to support globalRepaintEverything()
+  globalJSPlumbs.push(this.jsPlumbInstance);
 
 
   this.visitedLinesSet = null; // will change at every execution point
@@ -679,6 +690,7 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
 // This function is called every time the display needs to be updated
 ExecutionVisualizer.prototype.updateOutput = function() {
   var myViz = this; // to prevent confusion of 'this' inside of nested functions
+  var startingHeight = myViz.domRoot[0].offsetHeight;
 
   assert(this.curTrace);
 
@@ -857,6 +869,11 @@ ExecutionVisualizer.prototype.updateOutput = function() {
 
   // finally, render all of the data structures
   this.renderDataStructures();
+
+  // Make sure that connectors in other embedded visualizations move.
+  if (myViz.domRoot[0].offsetHeight != startingHeight) {
+    globalRepaintEverything();
+  }
 }
 
 

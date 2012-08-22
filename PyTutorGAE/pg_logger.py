@@ -371,7 +371,6 @@ class PGLogger(bdb.Bdb):
 
         # look for whether a nested function has been defined during
         # this particular call:
-        print("i", i, "at lineno", lineno, file=sys.stderr)
         if i > 1: # i == 1 implies that there's only a global scope visible
           for (k, v) in get_user_locals(top_frame).items():
             if (type(v) in (types.FunctionType, types.MethodType) and \

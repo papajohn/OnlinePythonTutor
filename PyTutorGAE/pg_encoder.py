@@ -160,6 +160,8 @@ class ObjectEncoder:
           printed_args.extend(['**' + e for e in argspec.keywords])
 
         func_name = get_name(dat)
+        if func_name == '<lambda>':
+            func_name = 'λ'
         pretty_name = func_name + '(' + ', '.join(printed_args) + ')'
         new_obj.extend(['FUNCTION', pretty_name, None]) # the final element will be filled in later
       elif typ == type(sum):

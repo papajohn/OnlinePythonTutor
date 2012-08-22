@@ -284,8 +284,8 @@ class PGLogger(bdb.Bdb):
           cur_name = cur_frame.f_code.co_name
 
           # special case for lambdas - grab their line numbers too (or not)
-          if cur_name == '':
-            cur_name = 'unnamed function'
+          if cur_name == '<lambda>':
+            cur_name = 'λ'
 
           # encode in a JSON-friendly format now, in order to prevent ill
           # effects of aliasing later down the line ...
@@ -371,6 +371,7 @@ class PGLogger(bdb.Bdb):
 
         # look for whether a nested function has been defined during
         # this particular call:
+        print("i", i, "at lineno", lineno, file=sys.stderr)
         if i > 1: # i == 1 implies that there's only a global scope visible
           for (k, v) in get_user_locals(top_frame).items():
             if (type(v) in (types.FunctionType, types.MethodType) and \

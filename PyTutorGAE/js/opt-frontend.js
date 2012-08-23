@@ -29,7 +29,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 // Pre-reqs: pytutor.js and jquery.ba-bbq.min.js should be imported BEFORE this file
 
-var backend_script = 'exec'; // URL of backend script, which must eventually call pg_logger.py
+var backend_script = 'web_exec.py'; // URL of backend script, which must eventually call pg_logger.py
 
 var appMode = 'edit'; // 'edit' or 'visualize'
 

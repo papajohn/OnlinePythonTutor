@@ -1,4 +1,4 @@
-# <INSERT YOUR VERSION OF PYTHON HERE AS A #! LINE>
+#!/usr/sww/bin/python3
 
 # Minimal CGI script for Online Python Tutor (v3).
 
@@ -6,6 +6,7 @@ import cgi
 import json
 import pg_logger
 import sys
+import cgitb; cgitb.enable()
 
 
 def cgi_finalizer(input_code, output_trace):
@@ -18,6 +19,7 @@ def cgi_finalizer(input_code, output_trace):
 
 if len(sys.argv) > 1:
   user_script = open(sys.argv[1]).read()
+  cumulative_mode = False
 else:
   form = cgi.FieldStorage()
   user_script = form['user_script'].value

@@ -23,6 +23,8 @@ else:
   form = cgi.FieldStorage()
   user_script = form['user_script'].value
   # convert from string to a Python boolean ...
-  cumulative_mode = (form['cumulative_mode'].value == 'true')
+  cumulative_mode = False
+  if 'cumulative_mode' in form:
+      cumulative_mode = (form['cumulative_mode'].value == 'true')
 
 pg_logger.exec_script_str(user_script, cumulative_mode, cgi_finalizer)

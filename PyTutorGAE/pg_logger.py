@@ -323,6 +323,8 @@ class PGLogger(bdb.Bdb):
           # special case for lambdas - grab their line numbers too (or not)
           if cur_name == '<lambda>':
             cur_name = 'λ'
+          if cur_name == '':
+            cur_name = 'unnamed function'
 
           # encode in a JSON-friendly format now, in order to prevent ill
           # effects of aliasing later down the line ...

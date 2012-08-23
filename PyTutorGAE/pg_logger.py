@@ -320,11 +320,7 @@ class PGLogger(bdb.Bdb):
 
           cur_name = cur_frame.f_code.co_name
 
-          # special case for lambdas - grab their line numbers too (or not)
-          if cur_name == '<lambda>':
-            # Unicode lambda :)
-            cur_name = "λ" # + ':line' + str(cur_frame.f_code.co_firstlineno)
-          elif cur_name == '':
+          if cur_name == '':
             cur_name = 'unnamed function'
 
           # encode in a JSON-friendly format now, in order to prevent ill

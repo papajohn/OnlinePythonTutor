@@ -29,7 +29,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 /* Most recent color scheme redesign: 2012-08-19 */
 
 table.visualizer {
-  font-family: verdana, arial, helvetica, sans-serif;
+  font-family: Helvetica, sans-serif;
   font-size: 10pt;
 }
 
@@ -76,7 +76,7 @@ div#pyCodeOutputDiv {
 
 table#pyCodeOutput {
   font-family: Andale mono, monospace;
-  font-size: 12pt;
+  font-size: 11pt;
   line-height: 1.1em;
   border-spacing: 0px;
   border-top: 1px solid #999999;

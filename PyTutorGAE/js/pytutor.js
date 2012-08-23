@@ -872,6 +872,8 @@ ExecutionVisualizer.prototype.updateOutput = function() {
 
   // Make sure that connectors in other embedded visualizations move.
   if (myViz.domRoot[0].offsetHeight != startingHeight) {
+    // Prevent future shrinking
+    myViz.domRoot[0].style.minHeight = myViz.domRoot[0].offsetHeight + "px";
     globalRepaintEverything();
   }
 }

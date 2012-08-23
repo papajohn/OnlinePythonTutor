@@ -161,7 +161,7 @@ class ObjectEncoder:
 
         func_name = get_name(dat)
         if func_name == '<lambda>':
-          func_name = u"\u03BB" # Unicode lambda :)
+          func_name = "λ" # Unicode lambda :)
         pretty_name = func_name + '(' + ', '.join(printed_args) + ')'
         new_obj.extend(['FUNCTION', pretty_name, None]) # the final element will be filled in later
       elif self.is_class(dat) or self.is_instance(dat):

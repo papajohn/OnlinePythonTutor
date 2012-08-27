@@ -1515,10 +1515,10 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
       var parentFrameID = obj[2]; // optional
 
       if (parentFrameID) {
-        d3DomElement.append('<div class="funcObj">function ' + funcName + ' [parent=f'+ parentFrameID + ']</div>');
+        d3DomElement.append('<div class="funcObj">func ' + funcName + ' [parent=f'+ parentFrameID + ']</div>');
       }
       else {
-        d3DomElement.append('<div class="funcObj">function ' + funcName + '</div>');
+        d3DomElement.append('<div class="funcObj">func ' + funcName + '</div>');
       }
     }
     else {

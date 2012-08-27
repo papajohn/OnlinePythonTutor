@@ -157,6 +157,10 @@ class ObjectEncoder:
           # don't display some built-in locals ...
           if k not in ('__module__', '__return__', '__locals__'):
             new_obj.append([self.encode(k), self.encode(v)])
+      elif typ == type(max):
+          func_name = get_name(dat)
+          pretty_name = func_name + '(...)'
+          new_obj.extend(['FUNCTION', pretty_name, None]) # the final element will be filled in later
       elif typ in (types.FunctionType, types.MethodType):
         # NB: In Python 3.0, getargspec is deprecated in favor of getfullargspec
         argspec = inspect.getargspec(dat)

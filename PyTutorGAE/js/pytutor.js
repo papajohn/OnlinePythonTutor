@@ -171,14 +171,12 @@ ExecutionVisualizer.prototype.render = function() {
             <tr>\
               <td id="stack_td">\
                 <div id="globals_area">\
-                  <div id="stackHeader">Frames</div>\
                 </div>\
                 <div id="stack">\
                 </div>\
               </td>\
               <td id="heap_td">\
                 <div id="heap">\
-                  <div id="heapHeader">Objects</div>\
                 </div>\
               </td>\
             </tr>\
@@ -205,7 +203,7 @@ ExecutionVisualizer.prototype.render = function() {
   // (note that we need to keep #globals_area separate from #stack for d3 to work its magic)
   this.domRoot.find("#globals_area").append('<div class="stackFrame" id="'
     + myViz.generateID('globals') + '"><div id="' + myViz.generateID('globals_header')
-    + '" class="stackFrameHeader">Global variables</div><table class="stackFrameVarTable" id="'
+    + '" class="stackFrameHeader">Global frame</div><table class="stackFrameVarTable" id="'
     + myViz.generateID('global_table') + '"></table></div>');
 
 
@@ -420,7 +418,7 @@ ExecutionVisualizer.prototype.setKeyboardBindings = function() {
 
   leftTablePane.attr('tabindex', '0');
   leftTablePane.css('outline', 'none'); // don't display a tacky border when focused
- 
+
   leftTablePane.keydown(function(k) {
     if (!myViz.keyStuckDown) {
       if (k.keyCode == 37) { // left arrow
@@ -619,7 +617,7 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
       }
     });
 
- 
+
     // if there is a comment containing 'breakpoint' and this line was actually executed,
     // then set a breakpoint on this line
     var breakpointInComment = false;
@@ -920,7 +918,7 @@ ExecutionVisualizer.prototype.precomputeCurTraceLayouts = function() {
 
   var myViz = this; // to prevent confusion of 'this' inside of nested functions
 
- 
+
   $.each(this.curTrace, function(i, curEntry) {
     var prevLayout = myViz.curTraceLayouts[myViz.curTraceLayouts.length - 1];
 
@@ -1595,7 +1593,7 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
     .data(realGlobalsLst, function(d) {
       return d[0]; // use variable name as key
     });
-    
+
 
   // ENTER
   globalsD3.enter()
@@ -1710,7 +1708,7 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
       // (might contain '<' or '>' for weird names like <genexpr>)
       var funcName = htmlspecialchars(frame.func_name).replace('&lt;lambda&gt;', '\u03bb');
 
-      var headerLabel = funcName + '()';
+      var headerLabel = funcName;
 
       // only display if you're someone's parent
       if (frame.is_parent) {
@@ -1749,7 +1747,7 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
     .append('tr')
     .on('mouseover', highlightAliasedConnectors)
     .on('mouseout',  unhighlightAllConnectors);
- 
+
 
   var stackVarTableCells = stackVarTable
     .selectAll('td.stackFrameVar,td.stackFrameValue')

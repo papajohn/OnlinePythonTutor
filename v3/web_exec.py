@@ -1,4 +1,4 @@
-# <INSERT YOUR VERSION OF PYTHON HERE AS A #! LINE>
+#!/usr/sww/bin/python3
 
 # Minimal CGI script for Online Python Tutor (v3), tested under Python 2 and 3
 
@@ -18,7 +18,7 @@ import pg_logger
 import sys
 
 
-# set to true if you want to log queries in DB_FILE 
+# set to true if you want to log queries in DB_FILE
 LOG_QUERIES = False
 
 if LOG_QUERIES:

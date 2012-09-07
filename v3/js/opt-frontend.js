@@ -31,12 +31,12 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 // backend scripts to execute (Python 2 and 3 variants, if available)
-//var python2_backend_script = 'web_exec_py2.py';
-//var python3_backend_script = 'web_exec_py3.py';
+var python2_backend_script = null;
+var python3_backend_script = 'web_exec.py';
 
 // uncomment below if you're running on Google App Engine using the built-in app.yaml
-var python2_backend_script = 'exec';
-var python3_backend_script = null;
+// var python2_backend_script = 'exec';
+// var python3_backend_script = null;
 
 var appMode = 'edit'; // 'edit' or 'visualize'
 
@@ -187,7 +187,7 @@ $(document).ready(function() {
            cumulative_mode: ($('#cumulativeModeSelector').val() == 'yes')},
           function(dataFromBackend) {
             var trace = dataFromBackend.trace;
-            
+
             // don't enter visualize mode if there are killer errors:
             if (!trace ||
                 (trace.length == 0) ||

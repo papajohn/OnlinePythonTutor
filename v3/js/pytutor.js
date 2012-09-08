@@ -63,7 +63,7 @@ function ExecutionVisualizer(domRootID, dat, params) {
   this.curInputCode = dat.code.rtrim(); // kill trailing spaces
   this.curTrace = dat.trace;
 
-  
+
   // optional filtering to remove redundancy ...
   // ok, we're gonna filter out all trace entries of 'call' events,
   // because each one contains IDENTICAL state information as the
@@ -179,14 +179,12 @@ ExecutionVisualizer.prototype.render = function() {
             <tr>\
               <td id="stack_td">\
                 <div id="globals_area">\
-                  <div id="stackHeader">Frames</div>\
                 </div>\
                 <div id="stack">\
                 </div>\
               </td>\
               <td id="heap_td">\
                 <div id="heap">\
-                  <div id="heapHeader">Objects</div>\
                 </div>\
               </td>\
             </tr>\
@@ -197,16 +195,17 @@ ExecutionVisualizer.prototype.render = function() {
   </table>');
 
 
-  this.domRoot
-    .find('#legendDiv')
-      .append(arrowHTML + ' line that has just executed')
-      .find('.arrow:last')
-        .css('color', lightArrowColor)
-        .end()
-      .append('<p style="margin-top:-6px">' + arrowHTML + ' next line to be executed</p>')
-      .find('.arrow:last')
-        .css('color', darkArrowColor);
-
+  if (!this.params.embeddedMode) {
+    this.domRoot
+      .find('#legendDiv')
+        .append(arrowHTML + ' line that has just executed')
+        .find('.arrow:last')
+          .css('color', lightArrowColor)
+          .end()
+        .append('<p style="margin-top:-6px">' + arrowHTML + ' next line to be executed</p>')
+        .find('.arrow:last')
+          .css('color', darkArrowColor);
+  }
 
   if (this.params.editCodeBaseURL) {
     var urlStr = $.param.fragment(this.params.editCodeBaseURL,
@@ -240,7 +239,7 @@ ExecutionVisualizer.prototype.render = function() {
   // (note that we need to keep #globals_area separate from #stack for d3 to work its magic)
   this.domRoot.find("#globals_area").append('<div class="stackFrame" id="'
     + myViz.generateID('globals') + '"><div id="' + myViz.generateID('globals_header')
-    + '" class="stackFrameHeader">Global variables</div><table class="stackFrameVarTable" id="'
+    + '" class="stackFrameHeader">Global frame</div><table class="stackFrameVarTable" id="'
     + myViz.generateID('global_table') + '"></table></div>');
 
 
@@ -604,7 +603,7 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
       }
     });
 
- 
+
     // if there is a comment containing 'breakpoint' and this line was actually executed,
     // then set a breakpoint on this line
     var breakpointInComment = false;
@@ -960,7 +959,7 @@ ExecutionVisualizer.prototype.precomputeCurTraceLayouts = function() {
 
   var myViz = this; // to prevent confusion of 'this' inside of nested functions
 
- 
+
   $.each(this.curTrace, function(i, curEntry) {
     var prevLayout = myViz.curTraceLayouts[myViz.curTraceLayouts.length - 1];
 
@@ -1557,10 +1556,10 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
       var parentFrameID = obj[2]; // optional
 
       if (parentFrameID) {
-        d3DomElement.append('<div class="funcObj">function ' + funcName + ' [parent=f'+ parentFrameID + ']</div>');
+        d3DomElement.append('<div class="funcObj">func ' + funcName + ' [parent=f'+ parentFrameID + ']</div>');
       }
       else {
-        d3DomElement.append('<div class="funcObj">function ' + funcName + '</div>');
+        d3DomElement.append('<div class="funcObj">func ' + funcName + '</div>');
       }
     }
     else {
@@ -1635,7 +1634,7 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
     .data(realGlobalsLst, function(d) {
       return d[0]; // use variable name as key
     });
-    
+
 
   // ENTER
   globalsD3.enter()
@@ -1789,7 +1788,7 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
     .append('tr')
     .on('mouseover', highlightAliasedConnectors)
     .on('mouseout',  unhighlightAllConnectors);
- 
+
 
   var stackVarTableCells = stackVarTable
     .selectAll('td.stackFrameVar,td.stackFrameValue')

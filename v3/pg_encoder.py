@@ -168,8 +168,13 @@ class ObjectEncoder:
           printed_args.append('**' + argspec.keywords)
 
         func_name = get_name(dat)
+        if func_name == '<lambda>':
+          func_name = 'λ'
         pretty_name = func_name + '(' + ', '.join(printed_args) + ')'
         new_obj.extend(['FUNCTION', pretty_name, None]) # the final element will be filled in later
+      elif typ is type(max):
+        pretty_name = get_name(dat) + '(...)'
+        new_obj.extend(['FUNCTION', pretty_name, None])
       elif self.is_class(dat) or self.is_instance(dat):
         self.encode_class_or_instance(dat, new_obj)
       elif typ is types.ModuleType:

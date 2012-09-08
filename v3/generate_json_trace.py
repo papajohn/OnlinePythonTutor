@@ -1,23 +1,21 @@
 # Generates a JSON trace that is compatible with the js/pytutor.js frontend
 
-CUMULATIVE_MODE = False
-
-COMPACT = False
-if COMPACT:
-  INDENT_LEVEL=None
-else:
-  INDENT_LEVEL=2
-
-
 import sys, pg_logger, json
-
+from optparse import OptionParser
 
 def json_finalizer(input_code, output_trace):
   ret = dict(code=input_code, trace=output_trace)
   json_output = json.dumps(ret, indent=INDENT_LEVEL)
   print(json_output)
 
+parser = OptionParser(usage="Generate JSON trace for pytutor")
+parser.add_option('-c', '--cumulative', default=False, action='store_true',
+        help='output cumulative trace.')
+parser.add_option('-o', '--compact', default=False, action='store_true',
+        help='output compact trace.')
+options, args = parser.parse_args()
+INDENT_LEVEL = None if options.compact else 2
 
-for f in sys.argv[1:]:
-  pg_logger.exec_script_str(open(f).read(), CUMULATIVE_MODE, json_finalizer)
-
+for f in args:
+  fin = sys.stdin if f == "-" else open(f)
+  pg_logger.exec_script_str(fin.read(), options.cumulative, json_finalizer)

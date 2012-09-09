@@ -98,6 +98,8 @@ function ExecutionVisualizer(domRootID, dat, params) {
     HoverPaintStyle: {lineWidth: 1, strokeStyle: connectorHighlightColor},
   });
 
+  // Add it to a global list, to support globalRepaintEverything()
+  globalJSPlumbs.push(this.jsPlumbInstance);
 
   // true iff trace ended prematurely since maximum instruction limit has
   // been reached
@@ -227,10 +229,6 @@ ExecutionVisualizer.prototype.render = function() {
 
     this.domRoot.find('#jmpFirstInstr').hide();
     this.domRoot.find('#jmpLastInstr').hide();
-
-    this.domRoot.find('#pyCodeOutputDiv')
-      .css('max-width', '350px')
-      .css('max-height', '400px');
 
   }
 
@@ -714,6 +712,7 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
 // This function is called every time the display needs to be updated
 ExecutionVisualizer.prototype.updateOutput = function() {
   var myViz = this; // to prevent confusion of 'this' inside of nested functions
+  var startingHeight = myViz.domRoot[0].offsetHeight;
 
   assert(this.curTrace);
 
@@ -914,8 +913,22 @@ ExecutionVisualizer.prototype.updateOutput = function() {
 
   // finally, render all of the data structures
   this.renderDataStructures();
+
+  // Make sure that connectors in other embedded visualizations move.
+  if (myViz.domRoot[0].offsetHeight != startingHeight) {
+    // Prevent future shrinking
+    myViz.domRoot[0].style.minHeight = myViz.domRoot[0].offsetHeight + "px";
+    globalRepaintEverything();
+  }
 }
 
+var globalJSPlumbs = []
+function globalRepaintEverything() {
+  var ii = globalJSPlumbs.length
+  for (i = 0; i < ii; i++) {
+    globalJSPlumbs[i].repaintEverything();
+  }
+}
 
 // Pre-compute the layout of top-level heap objects for ALL execution
 // points as soon as a trace is first loaded. The reason why we want to

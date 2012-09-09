@@ -73,8 +73,6 @@ div.ExecutionVisualizer table.frameDataViz td.val {
 }
 
 div.ExecutionVisualizer div#pyCodeOutputDiv {
-  max-width: 550px;
-  max-height: 450px;
   /*max-height: 620px;*/
   overflow: auto;
   /*margin-bottom: 4px;*/
@@ -82,7 +80,7 @@ div.ExecutionVisualizer div#pyCodeOutputDiv {
 
 div.ExecutionVisualizer table#pyCodeOutput {
   font-family: Andale mono, monospace;
-  font-size:12pt;
+  font-size:11pt;
   line-height:1.1em;
   border-spacing: 0px;
   border-top: 1px solid #bbb;
@@ -90,6 +88,7 @@ div.ExecutionVisualizer table#pyCodeOutput {
   border-bottom: 1px solid #bbb;
   /*margin-top: 6px;*/
   margin: 6px auto; /* Center code in its pane */
+  white-space: nowrap;
 }
 
 /* don't wrap lines within code output ... FORCE scrollbars to appear */
@@ -369,6 +368,7 @@ div.ExecutionVisualizer div.zombieStackFrame {
   padding-right: 6px;
   padding-bottom: 4px;
   font-size: 10pt;
+  white-space: nowrap;
 }
 
 div.ExecutionVisualizer div.zombieStackFrame {

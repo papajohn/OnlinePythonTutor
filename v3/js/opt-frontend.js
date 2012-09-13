@@ -58,6 +58,9 @@ var pyInputCodeMirror; // CodeMirror object that contains the input text
 function setCodeMirrorVal(dat) {
   pyInputCodeMirror.setValue(dat.rtrim() /* kill trailing spaces */);
   $('#urlOutput').val('');
+
+  // also scroll to top to make the UI more usable on smaller monitors
+  $(document).scrollTop(0);
 }
 
 
@@ -254,6 +257,9 @@ $(document).ready(function() {
                 keyStuckDown = false;
               });
 
+
+              // also scroll to top to make the UI more usable on smaller monitors
+              $(document).scrollTop(0);
 
               $.bbq.pushState({ mode: 'visualize' }, 2 /* completely override other hash strings to keep URL clean */);
             }
@@ -471,6 +477,11 @@ $(document).ready(function() {
 
   $('#forElseLink').click(function() {
     $.get("example-code/for-else.txt", setCodeMirrorVal);
+    return false;
+  });
+
+  $('#nonlocalLink').click(function() {
+    $.get("example-code/nonlocal.txt", setCodeMirrorVal);
     return false;
   });
 

@@ -55,7 +55,8 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
 
-var svgArrowPolygon = '0,3 12,3 12,0 18,5 12,10 12,7 0,7';
+var SVG_ARROW_POLYGON = '0,3 12,3 12,0 18,5 12,10 12,7 0,7';
+var SVG_ARROW_HEIGHT = 10; // must match height of SVG_ARROW_POLYGON
 
 var curVisualizerID = 1; // global to uniquely identify each ExecutionVisualizer instance
 
@@ -92,6 +93,11 @@ function ExecutionVisualizer(domRootID, dat, params) {
   // needs to be unique!
   this.visualizerID = curVisualizerID;
   curVisualizerID++;
+
+
+  this.leftGutterSvgInitialized = false;
+  this.arrowOffsetY = undefined;
+  this.codeRowHeight = undefined;
 
 
   // cool, we can create a separate jsPlumb instance for each visualization:
@@ -220,12 +226,12 @@ ExecutionVisualizer.prototype.render = function() {
 
     myViz.domRootD3.select('svg#prevLegendArrowSVG')
       .append('polygon')
-      .attr('points', svgArrowPolygon)
+      .attr('points', SVG_ARROW_POLYGON)
       .attr('fill', lightArrowColor);
 
     myViz.domRootD3.select('svg#curLegendArrowSVG')
       .append('polygon')
-      .attr('points', svgArrowPolygon)
+      .attr('points', SVG_ARROW_POLYGON)
       .attr('fill', darkArrowColor);
   }
 
@@ -423,7 +429,7 @@ ExecutionVisualizer.prototype.stepForward = function() {
     else {
       myViz.curInstr += 1;
     }
-    myViz.updateOutput();
+    myViz.updateOutput(true);
     return true;
   }
 
@@ -467,7 +473,6 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
   //   'text' - the text of the line of code
   //   'lineNumber' - one-indexed (always the array index + 1)
   //   'executionPoints' - an ordered array of zero-indexed execution points where this line was executed
-  //   'backgroundColor' - current code output line background color
   //   'breakpointHere' - has a breakpoint been set here?
   this.codeOutputLines = [];
 
@@ -606,7 +611,6 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
     n.text = cod;
     n.lineNumber = i + 1;
     n.executionPoints = [];
-    n.backgroundColor = null;
     n.breakpointHere = false;
 
     $.each(this.curTrace, function(j, elt) {
@@ -674,18 +678,18 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
   myViz.domRoot.find('#pyCodeOutput tr:first')
     .prepend('<td id="gutterTD" valign="top" rowspan="' + this.codeOutputLines.length + '"><svg id="leftCodeGutterSVG"/></td>');
 
-  // create prevLineArrow and curLineArrow, but don't fill them in with colors just yet ...
+  // create prevLineArrow and curLineArrow
   myViz.domRootD3.select('svg#leftCodeGutterSVG')
     .append('polygon')
     .attr('id', 'prevLineArrow')
-    .attr('points', svgArrowPolygon)
-    .attr('fill', 'white');
+    .attr('points', SVG_ARROW_POLYGON)
+    .attr('fill', lightArrowColor);
 
   myViz.domRootD3.select('svg#leftCodeGutterSVG')
     .append('polygon')
     .attr('id', 'curLineArrow')
-    .attr('points', svgArrowPolygon)
-    .attr('fill', 'white');
+    .attr('points', SVG_ARROW_POLYGON)
+    .attr('fill', darkArrowColor);
 
 
   // 2012-09-05: Disable breakpoints for now to simplify UX
@@ -734,37 +738,59 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
 
 
 // This function is called every time the display needs to be updated
-ExecutionVisualizer.prototype.updateOutput = function() {
+ExecutionVisualizer.prototype.updateOutput = function(smoothTransition) {
   var myViz = this; // to prevent confusion of 'this' inside of nested functions
   var startingHeight = myViz.domRoot[0].offsetHeight;
 
   assert(this.curTrace);
+
+  var myViz = this; // to prevent confusion of 'this' inside of nested functions
 
   // there's no point in re-rendering if this pane isn't even visible in the first place!
   if (!myViz.domRoot.is(':visible')) {
     return;
   }
 
-  // set the gutter's height to match that of its parent
-  // (we often can't do this earlier since the entire pane
-  //  might be invisible and hence return a height of zero)
+
   var gutterSVG = myViz.domRoot.find('svg#leftCodeGutterSVG');
-  if (!gutterSVG.height()) {
+
+  // one-time initialization of the left gutter
+  // (we often can't do this earlier since the entire pane
+  //  might be invisible and hence returns a height of zero or NaN
+  //  -- the exact format depends on browser)
+  if (!myViz.leftGutterSvgInitialized) {
+    // set the gutter's height to match that of its parent
     gutterSVG.height(gutterSVG.parent().height());
+
+    var firstRowOffsetY  = myViz.domRoot.find('table#pyCodeOutput tr:first').offset().top;
+
+    // first take care of edge case when there's only one line ...
+    myViz.codeRowHeight = myViz.domRoot.find('table#pyCodeOutput td.cod:first').height();
+
+    // ... then handle the (much more common) multi-line case ...
+    // this weird contortion is necessary to get the accurate row height on Internet Explorer
+    // (simpler methods work on all other major browsers, erghhhhhh!!!)
+    if (this.codeOutputLines && this.codeOutputLines.length > 1) {
+      var secondRowOffsetY = myViz.domRoot.find('table#pyCodeOutput tr:nth-child(2)').offset().top;
+      myViz.codeRowHeight = secondRowOffsetY - firstRowOffsetY;
+    }
+
+    assert(myViz.codeRowHeight > 0);
+
+    var gutterOffsetY = gutterSVG.offset().top;
+    var teenyAdjustment = gutterOffsetY - firstRowOffsetY;
+
+    // super-picky detail to adjust the vertical alignment of arrows so that they line up
+    // well with the pointed-to code text ...
+    // (if you want to manually adjust tableTop, then ~5 is a reasonable number)
+    myViz.arrowOffsetY = Math.floor((myViz.codeRowHeight / 2) - (SVG_ARROW_HEIGHT / 2)) - teenyAdjustment;
+
+    myViz.leftGutterSvgInitialized = true;
   }
 
-  var tableTop = 4; // manually adjust this so that it looks good :)
-
-  // this weird contortion is necessary to get the accurate row height on Internet Explorer
-  // (simpler methods work on all other major browsers, erghhhhhh!!!)
-
-  // first take care of edge case when there's only one line ...
-  var rowHeight = myViz.domRoot.find('table#pyCodeOutput td.cod:first').height();
-  // ... then handle the (much more common) multi-line case ...
-  if (this.codeOutputLines && this.codeOutputLines.length > 1) {
-    rowHeight = (myViz.domRoot.find('table#pyCodeOutput tr:nth-child(2)').offset().top -
-                 myViz.domRoot.find('table#pyCodeOutput tr:first').offset().top);
-  }
+  assert(myViz.arrowOffsetY !== undefined);
+  assert(myViz.codeRowHeight !== undefined);
+  assert(0 <= myViz.arrowOffsetY && myViz.arrowOffsetY <= myViz.codeRowHeight);
 
   // call the callback if necessary (BEFORE rendering)
   if (this.params.updateOutputCallback) {
@@ -862,37 +888,65 @@ ExecutionVisualizer.prototype.updateOutput = function() {
 
     // on 'return' events, give a bit more of a vertical nudge to show that
     // the arrow is aligned with the 'bottom' of the line ...
-    var prevVerticalNudge = prevIsReturn ? 10 : 0;
-    var curVerticalNudge = curIsReturn ? 10 : 0;
+    var prevVerticalNudge = prevIsReturn ? Math.floor(myViz.codeRowHeight / 2) : 0;
+    var curVerticalNudge  = curIsReturn  ? Math.floor(myViz.codeRowHeight / 2) : 0;
 
 
     // edge case for the final instruction :0
-    if (isTerminated) {
+    if (isTerminated && !hasError) {
       // don't show redundant arrows on the same line when terminated ...
       if (prevLineNumber == curLineNumber) {
         curLineNumber = null;
       }
       // otherwise have a smaller vertical nudge (to fit at bottom of display table)
       else {
-        curVerticalNudge = 8;
+        curVerticalNudge = curVerticalNudge - 2;
       }
     }
 
     if (prevLineNumber) {
-      gutterSVG.find('#prevLineArrow')
-        .show()
-        .attr('fill', lightArrowColor)
-        .attr('transform', 'translate(0, ' + (((prevLineNumber - 1) * rowHeight) + tableTop + prevVerticalNudge) + ')');
+      var pla = myViz.domRootD3.select('#prevLineArrow');
+      var translatePrevCmd = 'translate(0, ' + (((prevLineNumber - 1) * myViz.codeRowHeight) + myViz.arrowOffsetY + prevVerticalNudge) + ')';
+
+      if (smoothTransition) {
+        pla
+          .transition()
+          .duration(200)
+          .attr('fill', 'white')
+          .each('end', function() {
+            pla
+              .attr('transform', translatePrevCmd)
+              .attr('fill', lightArrowColor);
+
+            gutterSVG.find('#prevLineArrow').show(); // show at the end to avoid flickering
+          });
+      }
+      else {
+        pla.attr('transform', translatePrevCmd)
+        gutterSVG.find('#prevLineArrow').show();
+      }
+
     }
     else {
       gutterSVG.find('#prevLineArrow').hide();
     }
 
     if (curLineNumber) {
-      gutterSVG.find('#curLineArrow')
-        .show()
-        .attr('fill', darkArrowColor)
-        .attr('transform', 'translate(0, ' + (((curLineNumber - 1) * rowHeight) + tableTop + curVerticalNudge) + ')');
+      var cla = myViz.domRootD3.select('#curLineArrow');
+      var translateCurCmd = 'translate(0, ' + (((curLineNumber - 1) * myViz.codeRowHeight) + myViz.arrowOffsetY + curVerticalNudge) + ')';
+
+      if (smoothTransition) {
+        cla
+          .transition()
+          .delay(200)
+          .duration(250)
+          .attr('transform', translateCurCmd);
+      }
+      else {
+        cla.attr('transform', translateCurCmd);
+      }
+
+      gutterSVG.find('#curLineArrow').show();
     }
     else {
       gutterSVG.find('#curLineArrow').hide();
@@ -900,17 +954,23 @@ ExecutionVisualizer.prototype.updateOutput = function() {
 
 
     myViz.domRootD3.selectAll('#pyCodeOutputDiv td.cod')
-      .style('background-color', function(d) {
+      .style('border-top', function(d) {
         if (hasError && (d.lineNumber == curEntry.line)) {
-          d.backgroundColor = errorColor;
+          return '1px solid ' + errorColor;
         }
         else {
-          d.backgroundColor = null;
+          return '';
         }
-
-        return d.backgroundColor;
+      })
+      .style('border-bottom', function(d) {
+        // COPY AND PASTE ALERT!
+        if (hasError && (d.lineNumber == curEntry.line)) {
+          return '1px solid ' + errorColor;
+        }
+        else {
+          return '';
+        }
       });
-
 
     // returns True iff lineNo is visible in pyCodeOutputDiv
     function isOutputLineVisible(lineNo) {
@@ -1646,6 +1706,7 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
   // Render globals and then stack frames using d3:
 
 
+  // TODO: this sometimes seems buggy on Safari, so nix it for now:
   function highlightAliasedConnectors(d, i) {
     // if this row contains a stack pointer, then highlight its arrow and
     // ALL aliases that also point to the same heap object
@@ -1705,8 +1766,6 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
   // ENTER
   globalsD3.enter()
     .append('tr')
-    .on('mouseover', highlightAliasedConnectors)
-    .on('mouseout',  unhighlightAllConnectors)
     .selectAll('td.stackFrameVar,td.stackFrameValue')
     .data(function(d, i){return d;}) /* map varname down both columns */
     .enter()
@@ -1854,7 +1913,6 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
     .append('tr')
     .on('mouseover', highlightAliasedConnectors)
     .on('mouseout',  unhighlightAllConnectors);
-
 
   var stackVarTableCells = stackVarTable
     .selectAll('td.stackFrameVar,td.stackFrameValue')
@@ -2022,23 +2080,21 @@ var highlightedLineLighterColor = '#e8fff0';
 
 var funcCallLineColor = '#a2eebd';
 
-var darkRed = '#d03939';
+var brightRed = '#e93f34';
 
 var connectorBaseColor = '#005583';
-var connectorHighlightColor = darkRed;
+var connectorHighlightColor = brightRed;
 var connectorInactiveColor = '#cccccc';
 
-var errorColor = darkRed;
+var errorColor = brightRed;
 
-var breakpointColor = darkRed;
+var breakpointColor = brightRed;
 var hoverBreakpointColor = connectorBaseColor;
 
 
 // Unicode arrow types: '\u21d2', '\u21f0', '\u2907'
-var darkArrowColor = darkRed;
-var lightArrowColor = '#ccc';
-
-var arrowHTML = '<span class="arrow">\u21d2</span>';
+var darkArrowColor = brightRed;
+var lightArrowColor = '#c9e6ca';
 
 
 function assert(cond) {

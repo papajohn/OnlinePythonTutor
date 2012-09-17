@@ -1128,9 +1128,9 @@ ExecutionVisualizer.prototype.precomputeCurTraceLayouts = function() {
 
           if (!isPrimitiveType(child)) {
             var childID = getRefID(child);
-            if (structurallyEquivalent(heapObj, curEntry.heap[childID])) {
+            // if (structurallyEquivalent(heapObj, curEntry.heap[childID])) {
               updateCurLayout(childID, curRow, newRow);
-            }
+            // }
           }
         });
       }

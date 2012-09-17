@@ -13,7 +13,7 @@
 #
 # The above copyright notice and this permission notice shall be included
 # in all copies or substantial portions of the Software.
-# 
+#
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
 # OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 # MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -193,8 +193,11 @@ class PGLogger(bdb.Bdb):
         # variables from its (lexical) parent frame.
         if func_obj.__code__ == frame.f_code:
           all_matched = True
-          for k in parent_frame.f_locals:
-            if k != '__return__' and k in frame.f_locals:
+          for k in frame.f_locals:
+            # Do not try to match local names
+            if k in frame.f_code.co_varnames:
+              continue
+            if k != '__return__' and k in parent_frame.f_locals:
               if parent_frame.f_locals[k] != frame.f_locals[k]:
                 all_matched = False
                 break
@@ -334,27 +337,16 @@ class PGLogger(bdb.Bdb):
 
           if cur_name == '':
             cur_name = 'unnamed function'
+          if cur_name == '<lambda>':
+            cur_name = 'λ'
 
           # encode in a JSON-friendly format now, in order to prevent ill
           # effects of aliasing later down the line ...
           encoded_locals = {}
 
           for (k, v) in get_user_locals(cur_frame).items():
-            is_in_parent_frame = False
-
-            # don't display locals that appear in your parents' stack frames,
-            # since that's redundant
-            for pid in parent_frame_id_list:
-              parent_frame = self.lookup_zombie_frame_by_id(pid)
-              if k in parent_frame.f_locals:
-                # ignore __return__, which is never copied
-                if k != '__return__':
-                  # these values SHOULD BE ALIASES
-                  # (don't do an 'is' check since it might not fire for primitives)
-                  assert parent_frame.f_locals[k] == v
-                  is_in_parent_frame = True
-
-            if is_in_parent_frame:
+            # don't display locals inherited from a parent stack frames
+            if not k.startswith('__') and k not in cur_frame.f_code.co_varnames:
               continue
 
             # don't display some built-in locals ...

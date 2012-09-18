@@ -359,8 +359,8 @@ class PGLogger(bdb.Bdb):
                 if k != '__return__':
                   # these values SHOULD BE ALIASES
                   # (don't do an 'is' check since it might not fire for primitives)
-                  assert parent_frame.f_locals[k] == v
-                  is_in_parent_frame = True
+                  if parent_frame.f_locals[k] == v:
+                      is_in_parent_frame = True
 
             if is_in_parent_frame and k not in cur_frame.f_code.co_varnames:
                continue

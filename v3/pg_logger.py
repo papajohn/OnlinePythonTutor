@@ -344,10 +344,26 @@ class PGLogger(bdb.Bdb):
           # effects of aliasing later down the line ...
           encoded_locals = {}
 
+          print(cur_frame.f_code.__doc__, file=sys.stderr)
+          print(cur_frame.f_code.co_name, get_user_locals(cur_frame).keys(), file=sys.stderr)
+          print(cur_frame.f_code.co_name, cur_frame.f_code.co_varnames, file=sys.stderr)
           for (k, v) in get_user_locals(cur_frame).items():
-            # don't display locals inherited from a parent stack frames
-            if not k.startswith('__') and k not in cur_frame.f_code.co_varnames:
-              continue
+            is_in_parent_frame = False
+
+            # don't display locals that appear in your parents' stack frames,
+            # since that's redundant
+            for pid in parent_frame_id_list:
+              parent_frame = self.lookup_zombie_frame_by_id(pid)
+              if k in parent_frame.f_locals:
+                # ignore __return__, which is never copied
+                if k != '__return__':
+                  # these values SHOULD BE ALIASES
+                  # (don't do an 'is' check since it might not fire for primitives)
+                  assert parent_frame.f_locals[k] == v
+                  is_in_parent_frame = True
+
+            if is_in_parent_frame and k not in cur_frame.f_code.co_varnames:
+               continue
 
             # don't display some built-in locals ...
             if k == '__module__':

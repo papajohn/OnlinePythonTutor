@@ -344,9 +344,6 @@ class PGLogger(bdb.Bdb):
           # effects of aliasing later down the line ...
           encoded_locals = {}
 
-          print(cur_frame.f_code.__doc__, file=sys.stderr)
-          print(cur_frame.f_code.co_name, get_user_locals(cur_frame).keys(), file=sys.stderr)
-          print(cur_frame.f_code.co_name, cur_frame.f_code.co_varnames, file=sys.stderr)
           for (k, v) in get_user_locals(cur_frame).items():
             is_in_parent_frame = False
 

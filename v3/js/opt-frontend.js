@@ -38,7 +38,7 @@ var python3_backend_script = 'web_exec.py';
 // var python2_backend_script = 'exec';
 // var python3_backend_script = null;
 
-var appMode = 'edit'; // 'edit' or 'visualize'
+var appMode = 'edit'; // 'edit' or 'display'
 
 var preseededCode = null;     // if you passed in a 'code=<code string>' in the URL, then set this var
 var preseededCurInstr = null; // if you passed in a 'curInstr=<number>' in the URL, then set this var
@@ -84,57 +84,11 @@ $(document).ready(function() {
   $(window).bind("hashchange", function(e) {
     appMode = $.bbq.getState('mode'); // assign this to the GLOBAL appMode
 
-    preseededCode = $.bbq.getState('code'); // yuck, global!
-    var preseededMode = $.bbq.getState('mode');
-
-
-    // ugh, ugly tristate due to the possibility of being undefined :)
-    if ($.bbq.getState('cumulative_mode') == 'true') {
-      $('#cumulativeModeSelector').val('yes');
-    }
-    else if ($.bbq.getState('cumulative_mode') == 'false') {
-      $('#cumulativeModeSelector').val('no');
-    }
-    // else if it's undefined, don't do anything ...
-
-    if ($.bbq.getState('python_version') == '3') {
-      $('#pythonVersionSelector').val('3');
-    }
-    else if ($.bbq.getState('python_version') == '2') {
-      $('#pythonVersionSelector').val('2');
-    }
-    // else if it's undefined, don't do anything ...
-
-
-    // only bother with curInstr when we're visualizing ...
-    if (!preseededCurInstr && preseededMode == 'visualize') { // TODO: kinda gross hack
-      preseededCurInstr = Number($.bbq.getState('curInstr'));
-    }
-
-    // default mode is 'edit'
-    if (appMode == undefined) {
-      appMode = 'edit';
-    }
-
-    // if there's no myVisualizer, then default to edit mode since there's
-    // nothing to visualize:
-    if (!myVisualizer) {
-      appMode = 'edit';
-
-      if (preseededCode && preseededMode == 'visualize') {
-        // punt for now ...
-      }
-      else {
-        $.bbq.pushState({ mode: 'edit' }, 2 /* completely override other hash strings to keep URL clean */);
-      }
-    }
-
-
-    if (appMode == 'edit') {
+    if (appMode === undefined || appMode == 'edit') {
       $("#pyInputPane").show();
       $("#pyOutputPane").hide();
     }
-    else if (appMode == 'visualize') {
+    else if (appMode == 'display') {
       $("#pyInputPane").hide();
       $("#pyOutputPane").show();
 
@@ -150,18 +104,13 @@ $(document).ready(function() {
       $('#pyOutputPane #editBtn').click(function() {
         enterEditMode();
       });
-
     }
     else {
       assert(false);
     }
-  });
 
-  // From: http://benalman.com/projects/jquery-bbq-plugin/
-  //   Since the event is only triggered when the hash changes, we need
-  //   to trigger the event now, to handle the hash the page may have
-  //   loaded with.
-  $(window).trigger( "hashchange" );
+    $('#urlOutput').val(''); // clear to avoid stale values
+  });
 
 
   $("#executeBtn").attr('disabled', false);
@@ -187,7 +136,7 @@ $(document).ready(function() {
 
     $.get(backend_script,
           {user_script : pyInputCodeMirror.getValue(),
-           cumulative_mode: ($('#cumulativeModeSelector').val() == 'yes')},
+           cumulative_mode: $('#cumulativeModeSelector').val()},
           function(dataFromBackend) {
             var trace = dataFromBackend.trace;
 
@@ -261,7 +210,7 @@ $(document).ready(function() {
               // also scroll to top to make the UI more usable on smaller monitors
               $(document).scrollTop(0);
 
-              $.bbq.pushState({ mode: 'visualize' }, 2 /* completely override other hash strings to keep URL clean */);
+              $.bbq.pushState({ mode: 'display' }, 2 /* completely override other hash strings to keep URL clean */);
             }
           },
           "json");
@@ -486,19 +435,44 @@ $(document).ready(function() {
   });
 
 
+  // handle hash parameters passed in when loading the page
+  preseededCode = $.bbq.getState('code');
   if (preseededCode) {
     setCodeMirrorVal(preseededCode);
-
-    if ($.bbq.getState('mode') != 'edit') {
-      $("#executeBtn").trigger('click');
-    }
   }
   else {
     // select a canned example on start-up:
     $("#aliasExampleLink").trigger('click');
   }
 
+  // ugh, ugly tristate due to the possibility of them being undefined
+  var cumulativeState = $.bbq.getState('cumulative');
+  if (cumulativeState !== undefined) {
+    $('#cumulativeModeSelector').val(cumulativeState);
+  }
+  var pyState = $.bbq.getState('py');
+  if (pyState !== undefined) {
+    $('#pythonVersionSelector').val(pyState);
+  }
 
+  appMode = $.bbq.getState('mode'); // assign this to the GLOBAL appMode
+  if ((appMode == "display") && preseededCode /* jump to display only with pre-seeded code */) {
+    preseededCurInstr = Number($.bbq.getState('curInstr'));
+    $("#executeBtn").trigger('click');
+  }
+  else {
+    if (appMode === undefined) {
+      // default mode is 'edit', don't trigger a "hashchange" event
+      appMode = 'edit';
+    }
+    else {
+      // fail-soft by killing all passed-in hashes and triggering a "hashchange"
+      // event, which will then go to 'edit' mode
+      $.bbq.removeState();
+    }
+  }
+
+  
   // log a generic AJAX error handler
   $(document).ajaxError(function() {
     alert("Server error (possibly due to memory/resource overload).");
@@ -510,20 +484,22 @@ $(document).ready(function() {
 
   // redraw connector arrows on window resize
   $(window).resize(function() {
-    if (appMode == 'visualize') {
+    if (appMode == 'display') {
       myVisualizer.redrawConnectors();
     }
   });
 
   $('#genUrlBtn').bind('click', function() {
-    var urlStr = $.param.fragment(window.location.href,
-                                  {code: pyInputCodeMirror.getValue(),
-                                   curInstr: (appMode == 'visualize') ? myVisualizer.curInstr : 0,
-                                   mode: appMode,
-                                   cumulative_mode: ($('#cumulativeModeSelector').val() == 'yes'),
-                                   python_version: $('#pythonVersionSelector').val()
-                                  },
-                                  2);
+    var myArgs = {code: pyInputCodeMirror.getValue(),
+                  mode: appMode,
+                  cumulative: $('#cumulativeModeSelector').val(),
+                  py: $('#pythonVersionSelector').val()};
+
+    if (appMode == 'display') {
+      myArgs.curInstr = myVisualizer.curInstr;
+    }
+
+    var urlStr = $.param.fragment(window.location.href, myArgs, 2 /* clobber all */);
     $('#urlOutput').val(urlStr);
   });
 });

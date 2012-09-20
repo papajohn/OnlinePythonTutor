@@ -808,17 +808,17 @@ ExecutionVisualizer.prototype.updateOutput = function(smoothTransition) {
 
   var vcrControls = myViz.domRoot.find("#vcrControls");
 
-  // to be user-friendly, if we're on the LAST instruction, print "Program has terminated"
+  // to be user-friendly, if we're on the LAST instruction, print "Program terminated"
   if (isLastInstr) {
     if (this.instrLimitReached) {
       vcrControls.find("#curInstr").html("Instruction limit reached");
     }
     else {
-      vcrControls.find("#curInstr").html("Program has terminated");
+      vcrControls.find("#curInstr").html("Program terminated");
     }
   }
   else {
-    vcrControls.find("#curInstr").html("About to run step " +
+    vcrControls.find("#curInstr").html("Step " +
                                        String(this.curInstr + 1) +
                                        " of " + String(totalInstrs-1));
   }

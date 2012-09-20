@@ -145,8 +145,13 @@ div.ExecutionVisualizer #vcrControls {
 }
 
 div.ExecutionVisualizer #vcrControls button {
-  margin-left: 3px;
-  margin-right: 3px;
+  margin-left: 2px;
+  margin-right: 2px;
+}
+
+div.ExecutionVisualizer #vcrControls #curInstr {
+  margin-left: 4px;
+  margin-right: 4px;
 }
 
 div.ExecutionVisualizer #pyStdout {
@@ -179,9 +184,12 @@ div.ExecutionVisualizer .funcObj {
 
 div.ExecutionVisualizer .retval {
   font-size: 9pt;
-  color: #e93f34; /* should match brightRed JavaScript variable */
 }
 
+div.ExecutionVisualizer .stackFrame .retval {
+  color: #e93f34; /* highlight non-zombie stack frame return values -
+                     should match brightRed JavaScript variable */
+}
 
 /* Rendering of basic compound types */
 

@@ -31,7 +31,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 <head>
 
-<title>Online Python Tutor: Learn Python programming in your web browser</title>
+<title>Online Python Tutor - Learn programming by visualizing code execution</title>
 
 
 <!-- requirements for pytutor.js -->
@@ -62,33 +62,48 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 <div class="activityPane" id="learnPane">
 
-<h1><span id="learnHeading">LEARN</span> <span class="smallH1">to program in Python by writing code and visualizing execution</span></h1>
+<h1><span id="learnHeading">LEARN</span> <span class="smallH1">programming by visualizing code execution</span></h1>
 
+<!--
 <p><a id="optLink" href="visualize.html">Online Python Tutor</a>
 enables teachers and students to write <a
 href="http://www.python.org/">Python</a> programs directly in the web
 browser, execute those programs, and then step forwards and backwards
 through execution to view the run-time state of data structures.</p>
+ -->
 
-<p>For example, here is a recursive function that finds the sum of
-linked list elements. Click the &ldquo;Forward&rdquo; button to start
-stepping through execution.</p>
+
+<p><a id="optLink" href="visualize.html">Online Python Tutor</a> is a
+free educational tool that helps students overcome a fundamental
+barrier to learning programming: understanding what happens as the
+computer executes each line of a program's source code.  Using this
+tool, a teacher or student can write a <a
+href="http://www.python.org/">Python</a> program directly in the web
+browser and visualize what the computer is doing step-by-step as it
+executes the program.</p>
+
+<p>For example, I wrote the following Python program to <a
+href="http://en.wikipedia.org/wiki/Recursion_(computer_science)">recursively</a>
+find the sum of a linked list of numbers.  Click the
+&ldquo;Forward&rdquo; button to see what happens as the computer
+executes one line of code at a time.</p>
 
 <div id="demoViz"></div>
 
-<p>Over 100,000 people have used Online Python Tutor to understand and
-debug their programs, often as a supplement to textbooks, lecture notes,
-and online programming tutorials.</p>
+<p>So far, over 100,000 people have used Online Python Tutor to
+understand and debug their programs, often as a supplement to learning
+from textbooks, lecture notes, and online programming tutorials.</p>
 
 <p>In addition, instructors in over a dozen universities such as MIT, UC
 Berkeley, UC Davis, Sonoma State University, the University of
 Washington, the University of Waterloo, Luther College, and Swarthmore
-College have adopted it for teaching introductory computer science
-courses.</p>
+College have used it for teaching introductory computer science and
+programming courses.</p>
 
 <p>
-We are actively <b>seeking partnerships</b> with educators at all levels.
-Please email philip@pgbovine.net if you are interested.
+But this is just the beginning. We are actively <b>seeking partnerships</b> with
+educators at all grade levels to deploy and improve this tool.  Email
+philip@pgbovine.net if you are interested in collaborating.
 </p>
 
 </p>
@@ -111,11 +126,13 @@ Please email philip@pgbovine.net if you are interested.
 
 <h1><span id="embedHeading">EMBED</span> <span class="smallH1">visualizations in digital textbooks</span></h1>
 
-<p>Using just one line of JavaScript code, you can <a href="docs/embedding-HOWTO.txt">embed</a> an Online
-Python Tutor visualization within your web page. For example, the
-HTML textbook for the introductory CS course at UC Berkeley (<a
-href="http://www-inst.eecs.berkeley.edu/~cs61a/">CS61A</a>) contains
-dozens of embedded visualizations:
+<p>Using a single line of JavaScript code, you can <a
+href="docs/embedding-HOWTO.txt">embed</a> an Online Python Tutor
+visualization within your web page (as shown in the &ldquo;Learn&rdquo;
+box above). The screenshot below shows a few of these visualizations
+embedded within the online textbook for the introductory CS course at UC
+Berkeley (<a
+href="http://www-inst.eecs.berkeley.edu/~cs61a/">CS61A</a>):
 
 </p>
 
@@ -124,8 +141,8 @@ dozens of embedded visualizations:
 </a>
 <p>
 
-Similar visualizations have also been embedded within two other
-web-based digital Python textbook projects: <a
+These visualizations have also been embedded within two other web-based
+Python textbook projects: <a
 href="http://interactivepython.org/courselib/static/thinkcspy/index.html">How
 to Think Like a Computer Scientist: Interactive Edition</a> and <a
 href="http://cscircles.cemc.uwaterloo.ca/">Computer Science Circles</a>.
@@ -144,19 +161,20 @@ month and are being used in at least 25 universities around the world.
 <h1><span id="shareHeading">SHARE</span> <span class="smallH1">visualizations online</span></h1>
 
 <p>To share your current visualization, click the &ldquo;Generate
-URL&rdquo; button and paste that URL link in an email, social networking
+URL&rdquo; button (at the bottom of <a href="visualize.html">this
+page</a>) and paste that URL link in an email, social networking
 post, or forum question. When recipients click on that link, they will
 see your exact visualization. This feature is a more effective way for
 students to seek assistance than copying-and-pasting code snippets.</p>
 
 <p> For example, clicking <a
-href="visualize.html#code=%23+find+primes+using+a+for-else+construct%0Afor+n+in+range(2,+10)%3A%0A++++x_range+%3D+range(2,+n)%0A++++for+x+in+x_range%3A%0A++++++++if+n+%25+x+%3D%3D+0%3A%0A++++++++++++break%0A++++else%3A%0A++++++++%23+loop+fell+through+without+finding+a+factor%0A++++++++print(n)&curInstr=43&mode=visualize&cumulative_mode=false&python_version=2">this
+href="visualize.html#code=%23+find+primes+using+a+for-else+construct%0Afor+n+in+range(2,+10)%3A%0A++++x_range+%3D+range(2,+n)%0A++++for+x+in+x_range%3A%0A++++++++if+n+%25+x+%3D%3D+0%3A%0A++++++++++++break%0A++++else%3A%0A++++++++%23+loop+fell+through+without+finding+a+factor%0A++++++++print(n)&mode=display&cumulative=false&py=2&curInstr=43">this
 link</a> brings you directly to step 44 of 57 in a program that finds
 prime numbers using the Python <tt>for-else</tt> construct.</p>
 
 <p>In the near future, we plan to add an online <b>authoring environment</b> so
-that you can save code examples and then create annotations, lessons,
-discussion threads, and interactive activities on top of your
+that you can save code examples and then create annotations,
+discussion threads, lessons, and interactive exercises on top of your
 visualizations.</p>
 
 </div>
@@ -204,9 +222,11 @@ More Details:
 
 <p>Join the <a
 href="https://groups.google.com/forum/#!forum/pythontutor-users">pythontutor-users</a>
-mailing list to participate in user discussions or <a
+mailing list to participate in user discussions and <a
 href="https://groups.google.com/forum/#!forum/pythontutor-announce">pythontutor-announce</a>
-to receive occasional announcements.</p>
+to receive occasional announcements.
+<br/>
+(Your name and email address will be kept private; only the list owner can see them.)</p>
 
 <p>Copyright &copy; 2010-2012 <a href="http://www.pgbovine.net/">Philip Guo</a>. All rights reserved.</p>
 

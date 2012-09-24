@@ -63,7 +63,12 @@ DEBUG = True
 #   (beware that this is NOT foolproof at all ... there are known flaws!)
 #
 # ALWAYS use defense-in-depth and don't just rely on these simple mechanisms
-import resource
+try:
+  import resource
+  resource_module_loaded = True
+except ImportError:
+  # Google App Engine doesn't seem to have the 'resource' module
+  resource_module_loaded = False
 
 
 # ugh, I can't figure out why in Python 2, __builtins__ seems to
@@ -303,9 +308,27 @@ class PGLogger(bdb.Bdb):
         top_frame = tos[0]
         lineno = tos[1]
 
+        # don't trace inside of ANY functions that aren't user-written code
+        # (e.g., those from imported modules -- e.g., random, re -- or the
+        # __restricted_import__ function in this file)
+        #
+        # empirically, it seems like the FIRST entry in self.stack is
+        # the 'run' function from bdb.py, but everything else on the
+        # stack is the user program's "real stack"
+        for (cur_frame, cur_line) in self.stack[1:]:
+          # it seems like user-written code has a filename of '<string>',
+          # but maybe there are false positives too?
+          if self.canonic(cur_frame.f_code.co_filename) != '<string>':
+            return
+          # also don't trace inside of the magic "constructor" code
+          if cur_frame.f_code.co_name == '__new__':
+            return
+
+
         # don't trace inside of our __restricted_import__ helper function
-        if top_frame.f_code.co_name == '__restricted_import__':
-          return
+        # (this check is now subsumed by the above check)
+        #if top_frame.f_code.co_name == '__restricted_import__':
+        #  return
 
         self.encoder.reset_heap() # VERY VERY VERY IMPORTANT,
                                   # or else we won't properly capture heap object mutations in the trace!
@@ -378,7 +401,7 @@ class PGLogger(bdb.Bdb):
                       is_in_parent_frame = True
 
             if is_in_parent_frame and k not in cur_frame.f_code.co_varnames:
-               continue
+              continue
 
             # don't display some built-in locals ...
             if k == '__module__':
@@ -676,12 +699,32 @@ class PGLogger(bdb.Bdb):
           # memory bombs such as:
           #   x = 2
           #   while True: x = x*x
-          resource.setrlimit(resource.RLIMIT_AS, (200000000, 200000000))
-          resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
+          if resource_module_loaded:
+            resource.setrlimit(resource.RLIMIT_AS, (200000000, 200000000))
+            resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
 
-          # protect against unauthorized filesystem accesses ...
-          resource.setrlimit(resource.RLIMIT_NOFILE, (0, 0)) # no opened files allowed
-          resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))  # (redundancy for paranoia)
+            # protect against unauthorized filesystem accesses ...
+            resource.setrlimit(resource.RLIMIT_NOFILE, (0, 0)) # no opened files allowed
+
+            # VERY WEIRD. If you activate this resource limitation, it
+            # ends up generating an EMPTY trace for the following program:
+            #   "x = 0\nfor i in range(10):\n  x += 1\n   print x\n  x += 1\n"
+            # (at least on my Webfaction hosting with Python 2.7)
+            #resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))  # (redundancy for paranoia)
+
+            # sys.modules contains an in-memory cache of already-loaded
+            # modules, so if you delete modules from here, they will
+            # need to be re-loaded from the filesystem.
+            #
+            # Thus, as an extra precaution, remove these modules so that
+            # they can't be re-imported without opening a new file,
+            # which is disallowed by resource.RLIMIT_NOFILE
+            #
+            # Of course, this isn't a foolproof solution by any means,
+            # and it might lead to UNEXPECTED FAILURES later in execution.
+            del sys.modules['os']
+            del sys.modules['sys']
+
           self.run(script_str, user_globals, user_globals)
         # sys.exit ...
         except SystemExit:
@@ -693,19 +736,26 @@ class PGLogger(bdb.Bdb):
 
           trace_entry = dict(event='uncaught_exception')
 
-          exc = sys.exc_info()[1]
-          if hasattr(exc, 'lineno'):
-            trace_entry['line'] = exc.lineno
-          if hasattr(exc, 'offset'):
-            trace_entry['offset'] = exc.offset
+          (exc_type, exc_val, exc_tb) = sys.exc_info()
+          if hasattr(exc_val, 'lineno'):
+            trace_entry['line'] = exc_val.lineno
+          if hasattr(exc_val, 'offset'):
+            trace_entry['offset'] = exc_val.offset
 
-          if hasattr(exc, 'msg'):
-            trace_entry['exception_msg'] = "Error: " + exc.msg
-          else:
-            trace_entry['exception_msg'] = "Unknown error"
+          trace_entry['exception_msg'] = type(exc_val).__name__ + ": " +  str(exc_val)
 
-          self.trace.append(trace_entry)
-          #self.finalize()
+          # SUPER SUBTLE! if this exact same exception has already been
+          # recorded by the program, then DON'T record it again as an
+          # uncaught_exception
+          already_caught = False
+          for e in self.trace:
+            if e['event'] == 'exception' and e['exception_msg'] == trace_entry['exception_msg']:
+              already_caught = True
+              break
+
+          if not already_caught:
+            self.trace.append(trace_entry)
+
           raise bdb.BdbQuit # need to forceably STOP execution
 
 
@@ -719,6 +769,8 @@ class PGLogger(bdb.Bdb):
 
       assert len(self.trace) <= (MAX_EXECUTED_LINES + 1)
 
+      # don't do this anymore ...
+      '''
       # filter all entries after 'return' from '<module>', since they
       # seem extraneous:
       res = []
@@ -726,8 +778,11 @@ class PGLogger(bdb.Bdb):
         res.append(e)
         if e['event'] == 'return' and e['func_name'] == '<module>':
           break
+      '''
 
-      # another hack: if the SECOND to last entry is an 'exception'
+      res = self.trace
+
+      # if the SECOND to last entry is an 'exception'
       # and the last entry is return from <module>, then axe the last
       # entry, for aesthetic reasons :)
       if len(res) >= 2 and \
@@ -736,8 +791,6 @@ class PGLogger(bdb.Bdb):
         res.pop()
 
       self.trace = res
-
-      #for e in self.trace: print >> sys.stderr, e
 
       self.finalizer_func(self.executed_script, self.trace)
 

@@ -68,6 +68,23 @@ if is_python3:
   long = None # Avoid NameError when evaluating "long"
 
 
+def is_class(dat):
+  """Return whether dat is a class."""
+  if is_python3:
+    return isinstance(dat, type)
+  else:
+    return type(dat) in (types.ClassType, types.TypeType)
+
+
+def is_instance(dat):
+  """Return whether dat is an instance of a class."""
+  if is_python3:
+    return isinstance(type(dat), type) and not isinstance(dat, type)
+  else:
+    # ugh, classRE match is a bit of a hack :(
+    return type(dat) == types.InstanceType or classRE.match(str(type(dat)))
+
+
 def get_name(obj):
   """Return the name of an object."""
   return obj.__name__ if hasattr(obj, '__name__') else get_name(type(obj))
@@ -105,7 +122,8 @@ class ObjectEncoder:
 
   # return either a primitive object or an object reference;
   # and as a side effect, update encoded_heap_objects
-  def encode(self, dat):
+  def encode(self, dat, get_parent=None):
+    """Encode a data value DAT using the GET_PARENT function for parent ids."""
     # primitive type
     if type(dat) in (int, long, float, str, bool, type(None)):
       if type(dat) is float:
@@ -142,40 +160,53 @@ class ObjectEncoder:
       if typ == list:
         new_obj.append('LIST')
         for e in dat:
-          new_obj.append(self.encode(e))
+          new_obj.append(self.encode(e, get_parent))
       elif typ == tuple:
         new_obj.append('TUPLE')
         for e in dat:
-          new_obj.append(self.encode(e))
+          new_obj.append(self.encode(e, get_parent))
       elif typ == set:
         new_obj.append('SET')
         for e in dat:
-          new_obj.append(self.encode(e))
+          new_obj.append(self.encode(e, get_parent))
       elif typ == dict:
         new_obj.append('DICT')
         for (k, v) in dat.items():
           # don't display some built-in locals ...
           if k not in ('__module__', '__return__', '__locals__'):
-            new_obj.append([self.encode(k), self.encode(v)])
+            new_obj.append([self.encode(k, get_parent), self.encode(v, get_parent)])
       elif typ in (types.FunctionType, types.MethodType):
-        # NB: In Python 3.0, getargspec is deprecated in favor of getfullargspec
-        argspec = inspect.getargspec(dat)
+        if is_python3:
+          argspec = inspect.getfullargspec(dat)
+        else:
+          argspec = inspect.getargspec(dat)
 
         printed_args = [e for e in argspec.args]
         if argspec.varargs:
           printed_args.append('*' + argspec.varargs)
-        if argspec.keywords:
-          printed_args.append('**' + argspec.keywords)
+
+        if is_python3:
+          if argspec.varkw:
+            printed_args.append('**' + argspec.varkw)
+          if argspec.kwonlyargs:
+            printed_args.extend(argspec.kwonlyargs)
+        else:
+          if argspec.keywords:
+            printed_args.append('**' + argspec.keywords)
 
         func_name = get_name(dat)
         if func_name == '<lambda>':
           func_name = 'λ'
         pretty_name = func_name + '(' + ', '.join(printed_args) + ')'
-        new_obj.extend(['FUNCTION', pretty_name, None]) # the final element will be filled in later
+        encoded_val = ['FUNCTION', pretty_name, None]
+        if get_parent:
+          enclosing_frame_id = get_parent(dat)
+          encoded_val[2] = enclosing_frame_id
+        new_obj.extend(encoded_val)
       elif typ is types.BuiltinFunctionType:
         pretty_name = get_name(dat) + '(...)'
         new_obj.extend(['FUNCTION', pretty_name, None])
-      elif self.is_class(dat) or self.is_instance(dat):
+      elif is_class(dat) or is_instance(dat):
         self.encode_class_or_instance(dat, new_obj)
       elif typ is types.ModuleType:
         new_obj.extend(['module', dat.__name__])
@@ -192,26 +223,9 @@ class ObjectEncoder:
       return ret
 
 
-  def is_class(self, dat):
-    """Return whether dat is a class."""
-    if is_python3:
-      return isinstance(dat, type)
-    else:
-      return type(dat) in (types.ClassType, types.TypeType)
-
-
-  def is_instance(self, dat):
-    """Return whether dat is an instance of a class."""
-    if is_python3:
-      return isinstance(type(dat), type) and not isinstance(dat, type)
-    else:
-      # ugh, classRE match is a bit of a hack :(
-      return type(dat) == types.InstanceType or classRE.match(str(type(dat)))
-
-
   def encode_class_or_instance(self, dat, new_obj):
     """Encode dat as a class or instance."""
-    if self.is_instance(dat):
+    if is_instance(dat):
       class_name = get_name(dat.__class__)
       new_obj.extend(['INSTANCE', class_name])
       # don't traverse inside modules, or else risk EXPLODING the visualization

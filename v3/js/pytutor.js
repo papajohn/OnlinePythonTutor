@@ -1522,7 +1522,6 @@ ExecutionVisualizer.prototype.updateOutput = function(smoothTransition) {
             gutterSVG.find('#curLineArrow').hide();
         }
     }
->>>>>>> upstream/master
 
     myViz.domRootD3.selectAll('#pyCodeOutputDiv td.cod')
       .style('border-top', function(d) {
@@ -2401,7 +2400,7 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
       var funcName = htmlspecialchars(obj[1]).replace('&lt;lambda&gt;', '\u03bb');
       var parentFrameID = obj[2]; // optional
 
-      d3DomElement.append('<div class="typeLabel">' + typeLabelPrefix + 'function</div>');
+      // d3DomElement.append('<div class="typeLabel">' + typeLabelPrefix + 'function</div>');
 
       if (parentFrameID) {
         d3DomElement.append('<div class="funcObj">func ' + funcName + ' [parent=f'+ parentFrameID + ']</div>');

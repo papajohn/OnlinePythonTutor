@@ -56,8 +56,8 @@ def cgi_finalizer(input_code, output_trace):
   print("Content-type: text/plain; charset=iso-8859-1\n")
   print(json_output)
 
-
-cumulative_mode = False
+raw_input_json = None
+options_json = None
 
 # If you pass in a filename as an argument, then process script from that file ...
 if len(sys.argv) > 1:
@@ -65,12 +65,14 @@ if len(sys.argv) > 1:
 
 # Otherwise act like a CGI script with parameters:
 #   user_script
-#   cumulative_mode
+#   raw_input_json
+#   options_json
 else:
   form = cgi.FieldStorage()
   user_script = form['user_script'].value
-  if 'cumulative_mode' in form:
-    # convert from string to a Python boolean ...
-    cumulative_mode = (form['cumulative_mode'].value == 'true')
+  if 'raw_input_json' in form:
+    raw_input_json = form['raw_input_json'].value
+  if 'options_json' in form:
+    options_json = form['options_json'].value
 
-pg_logger.exec_script_str(user_script, cumulative_mode, cgi_finalizer)
+pg_logger.exec_script_str(user_script, raw_input_json, options_json, cgi_finalizer)

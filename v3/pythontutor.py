@@ -1,7 +1,7 @@
 # Online Python Tutor
 # https://github.com/pgbovine/OnlinePythonTutor/
 # 
-# Copyright (C) 2010-2012 Philip J. Guo (philip@pgbovine.net)
+# Copyright (C) 2010-2013 Philip J. Guo (philip@pgbovine.net)
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the
@@ -48,6 +48,13 @@ class TutorPage(webapp2.RequestHandler):
     self.response.out.write(template.render())
 
 
+class IframeEmbedPage(webapp2.RequestHandler):
+  def get(self):
+    self.response.headers['Content-Type'] = 'text/html'
+    template = JINJA_ENVIRONMENT.get_template('iframe-embed.html')
+    self.response.out.write(template.render())
+
+
 class LessonPage(webapp2.RequestHandler):
 
   def get(self):
@@ -67,15 +74,14 @@ class ExecScript(webapp2.RequestHandler):
     self.response.headers['Content-Type'] = 'application/json'
     self.response.headers['Cache-Control'] = 'no-cache'
 
-    # convert from string to a Python boolean ...
-    cumulative_mode = (self.request.get('cumulative_mode') == 'true')
-    
     pg_logger.exec_script_str(self.request.get('user_script'),
-                              cumulative_mode,
+                              self.request.get('raw_input_json'),
+                              self.request.get('options_json'),
                               self.json_finalizer)
 
 
 app = webapp2.WSGIApplication([('/', TutorPage),
+                               ('/iframe-embed.html', IframeEmbedPage),
                                ('/lesson.html', LessonPage),
                                ('/exec', ExecScript)],
                               debug=True)

@@ -13,21 +13,26 @@ json.encoder.FLOAT_REPR = lambda f: ('%.3f' % f)
 def json_finalizer(input_code, output_trace):
   ret = dict(code=input_code, trace=output_trace)
   json_output = json.dumps(ret, indent=INDENT_LEVEL)
-  print(json_output)
+  return json_output
 
 def js_var_finalizer(input_code, output_trace):
   global JS_VARNAME
   ret = dict(code=input_code, trace=output_trace)
   json_output = json.dumps(ret, indent=None)
-  print("var %s = %s;" % (JS_VARNAME, json_output))
+  return "var %s = %s;" % (JS_VARNAME, json_output)
 
 parser = OptionParser(usage="Generate JSON trace for pytutor")
 parser.add_option('-c', '--cumulative', default=False, action='store_true',
         help='output cumulative trace.')
+parser.add_option('-p', '--heapPrimitives', default=False, action='store_true',
+        help='render primitives as heap objects.')
 parser.add_option('-o', '--compact', default=False, action='store_true',
         help='output compact trace.')
-parser.add_option("--create_jsvar", dest="js_varname",
+parser.add_option('-i', '--input', default=False, action='store',
+        help='JSON list of strings for simulated raw_input.', dest='raw_input_lst_json')
+parser.add_option("--create_jsvar", dest="js_varname", default=None,
                   help="Create a JavaScript variable out of the trace")
+
 (options, args) = parser.parse_args()
 INDENT_LEVEL = None if options.compact else 2
 
@@ -35,6 +40,6 @@ fin = sys.stdin if args[0] == "-" else open(args[0])
 
 if options.js_varname:
   JS_VARNAME = options.js_varname
-  pg_logger.exec_script_str(fin.read(), options.cumulative, js_var_finalizer)
+  print(pg_logger.exec_script_str_local(fin.read(), options.raw_input_lst_json, options.cumulative, options.heapPrimitives, js_var_finalizer))
 else:
-  pg_logger.exec_script_str(fin.read(), options.cumulative, json_finalizer)
+  print(pg_logger.exec_script_str_local(fin.read(), options.raw_input_lst_json, options.cumulative, options.heapPrimitives, json_finalizer))

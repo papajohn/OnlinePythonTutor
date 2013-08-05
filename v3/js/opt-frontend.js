@@ -3,7 +3,7 @@
 Online Python Tutor
 https://github.com/pgbovine/OnlinePythonTutor/
 
-Copyright (C) 2010-2012 Philip J. Guo (philip@pgbovine.net)
+Copyright (C) 2010-2013 Philip J. Guo (philip@pgbovine.net)
 
 Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the
@@ -38,26 +38,35 @@ var python3_backend_script = 'web_exec.py';
 // var python2_backend_script = 'exec';
 // var python3_backend_script = null;
 
-var appMode = 'edit'; // 'edit' or 'display'
+// KRAZY experimental KODE!!! Use a custom hacked CPython interpreter
+// var python2crazy_backend_script = 'web_exec_py2-crazy.py';
+// On Google App Engine, simply run dev_appserver.py with the
+// crazy custom CPython interpreter to get 2crazy
+// var python2crazy_backend_script = 'exec';
+
+var appMode = 'edit'; // 'edit', 'display', or 'display_no_frills'
 
 var preseededCode = null;     // if you passed in a 'code=<code string>' in the URL, then set this var
 var preseededCurInstr = null; // if you passed in a 'curInstr=<number>' in the URL, then set this var
 
+var rawInputLst = []; // a list of strings inputted by the user in response to raw_input or mouse_input events
 
 var myVisualizer = null; // singleton ExecutionVisualizer instance
 
-var keyStuckDown = false;
 
 function enterEditMode() {
   $.bbq.pushState({ mode: 'edit' }, 2 /* completely override other hash strings to keep URL clean */);
 }
 
+function enterDisplayNoFrillsMode() {
+  $.bbq.pushState({ mode: 'display_no_frills' }, 2 /* completely override other hash strings to keep URL clean */);
+}
 
 var pyInputCodeMirror; // CodeMirror object that contains the input text
 
 function setCodeMirrorVal(dat) {
   pyInputCodeMirror.setValue(dat.rtrim() /* kill trailing spaces */);
-  $('#urlOutput').val('');
+  $('#urlOutput,#embedCodeOutput').val('');
 
   // also scroll to top to make the UI more usable on smaller monitors
   $(document).scrollTop(0);
@@ -65,6 +74,8 @@ function setCodeMirrorVal(dat) {
 
 
 $(document).ready(function() {
+
+  $("#embedLinkDiv").hide();
 
   pyInputCodeMirror = CodeMirror(document.getElementById('codeInputPane'), {
     mode: 'python',
@@ -87,10 +98,18 @@ $(document).ready(function() {
     if (appMode === undefined || appMode == 'edit') {
       $("#pyInputPane").show();
       $("#pyOutputPane").hide();
+      $("#embedLinkDiv").hide();
+
+      // destroy all annotation bubbles (NB: kludgy)
+      if (myVisualizer) {
+        myVisualizer.destroyAllAnnotationBubbles();
+      }
     }
     else if (appMode == 'display') {
       $("#pyInputPane").hide();
       $("#pyOutputPane").show();
+
+      $("#embedLinkDiv").show();
 
       $('#executeBtn').html("Visualize execution");
       $('#executeBtn').attr('disabled', false);
@@ -100,125 +119,169 @@ $(document).ready(function() {
       // jsPlumb connectors won't render properly
       myVisualizer.updateOutput();
 
-      // customize edit button click functionality AFTER rendering (TODO: awkward!)
+      // customize edit button click functionality AFTER rendering (NB: awkward!)
+      $('#pyOutputPane #editCodeLinkDiv').show();
       $('#pyOutputPane #editBtn').click(function() {
         enterEditMode();
       });
+    }
+    else if (appMode == 'display_no_frills') {
+      $("#pyInputPane").hide();
+      $("#pyOutputPane").show();
+      $("#embedLinkDiv").show();
     }
     else {
       assert(false);
     }
 
-    $('#urlOutput').val(''); // clear to avoid stale values
+    $('#urlOutput,#embedCodeOutput').val(''); // clear to avoid stale values
   });
 
 
-  $("#executeBtn").attr('disabled', false);
-  $("#executeBtn").click(function() {
+  function executeCode(forceStartingInstr) {
+      var backend_script = null;
+      if ($('#pythonVersionSelector').val() == '2') {
+          backend_script = python2_backend_script;
+      }
+      else if ($('#pythonVersionSelector').val() == '3') {
+          backend_script = python3_backend_script;
+      }
+      // experimental KRAZY MODE!!!
+      else if ($('#pythonVersionSelector').val() == '2crazy') {
+          backend_script = python2crazy_backend_script;
+      }
 
-    var backend_script = null;
-    if ($('#pythonVersionSelector').val() == '2') {
-        backend_script = python2_backend_script;
-    }
-    else if ($('#pythonVersionSelector').val() == '3') {
-        backend_script = python3_backend_script;
-    }
+      if (!backend_script) {
+        alert('Error: This server is not configured to run Python ' + $('#pythonVersionSelector').val());
+        return;
+      }
 
-    if (!backend_script) {
-      alert('Error: This server is not configured to run Python ' + $('#pythonVersionSelector').val());
-      return;
-    }
-
-    $('#executeBtn').html("Please wait ... processing your code");
-    $('#executeBtn').attr('disabled', true);
-    $("#pyOutputPane").hide();
+      $('#executeBtn').html("Please wait ... processing your code");
+      $('#executeBtn').attr('disabled', true);
+      $("#pyOutputPane").hide();
+      $("#embedLinkDiv").hide();
 
 
-    $.get(backend_script,
-          {user_script : pyInputCodeMirror.getValue(),
-           cumulative_mode: $('#cumulativeModeSelector').val()},
-          function(dataFromBackend) {
-            var trace = dataFromBackend.trace;
+      // set up all options in a JS object
+      var options = {cumulative_mode: ($('#cumulativeModeSelector').val() == 'true'),
+                     heap_primitives: ($('#heapPrimitivesSelector').val() == 'true'),
+                     show_only_outputs: ($('#showOnlyOutputsSelector').val() == 'true'),
+                     py_crazy_mode: ($('#pythonVersionSelector').val() == '2crazy')};
 
-            // don't enter visualize mode if there are killer errors:
-            if (!trace ||
-                (trace.length == 0) ||
-                (trace[trace.length - 1].event == 'uncaught_exception')) {
+      $.get(backend_script,
+            {user_script : pyInputCodeMirror.getValue(),
+             raw_input_json: rawInputLst.length > 0 ? JSON.stringify(rawInputLst) : '',
+             options_json: JSON.stringify(options)},
+            function(dataFromBackend) {
+              var trace = dataFromBackend.trace;
 
-              if (trace.length == 1) {
-                var errorLineNo = trace[0].line - 1; /* CodeMirror lines are zero-indexed */
-                if (errorLineNo !== undefined) {
-                  // highlight the faulting line in pyInputCodeMirror
-                  pyInputCodeMirror.focus();
-                  pyInputCodeMirror.setCursor(errorLineNo, 0);
-                  pyInputCodeMirror.setLineClass(errorLineNo, null, 'errorLine');
+              // don't enter visualize mode if there are killer errors:
+              if (!trace ||
+                  (trace.length == 0) ||
+                  (trace[trace.length - 1].event == 'uncaught_exception')) {
 
-                  pyInputCodeMirror.setOption('onChange', function() {
-                    pyInputCodeMirror.setLineClass(errorLineNo, null, null); // reset line back to normal
-                    pyInputCodeMirror.setOption('onChange', null); // cancel
-                  });
+                if (trace.length == 1) {
+                  var errorLineNo = trace[0].line - 1; /* CodeMirror lines are zero-indexed */
+                  if (errorLineNo !== undefined) {
+                    // highlight the faulting line in pyInputCodeMirror
+                    pyInputCodeMirror.focus();
+                    pyInputCodeMirror.setCursor(errorLineNo, 0);
+                    pyInputCodeMirror.setLineClass(errorLineNo, null, 'errorLine');
+
+                    pyInputCodeMirror.setOption('onChange', function() {
+                      pyInputCodeMirror.setLineClass(errorLineNo, null, null); // reset line back to normal
+                      pyInputCodeMirror.setOption('onChange', null); // cancel
+                    });
+                  }
+
+                  alert(trace[0].exception_msg);
+                }
+                else if (trace[trace.length - 1].exception_msg) {
+                  alert(trace[trace.length - 1].exception_msg);
+                }
+                else {
+                  alert("Whoa, unknown error! Reload to try again, or report a bug to philip@pgbovine.net\n\n(Click the 'Generate URL' button to include a unique URL in your email bug report.)");
+>>>>>>> upstream/master
                 }
 
-                alert(trace[0].exception_msg);
-              }
-              else if (trace[trace.length - 1].exception_msg) {
-                alert(trace[trace.length - 1].exception_msg);
+                $('#executeBtn').html("Visualize execution");
+                $('#executeBtn').attr('disabled', false);
               }
               else {
-                alert("Whoa, unknown error! Reload to try again, or report a bug to philip@pgbovine.net\n\n(Click the 'Generate URL' button to include a unique URL in your email bug report.)");
-              }
+                var startingInstruction = 0;
 
-              $('#executeBtn').html("Visualize execution");
-              $('#executeBtn').attr('disabled', false);
-            }
-            else {
-              var startingInstruction = 0;
+                // only do this at most ONCE, and then clear out preseededCurInstr
+                if (preseededCurInstr && preseededCurInstr < trace.length) { // NOP anyways if preseededCurInstr is 0
+                  startingInstruction = preseededCurInstr;
+                  preseededCurInstr = null;
+                }
 
-              // only do this at most ONCE, and then clear out preseededCurInstr
-              if (preseededCurInstr && preseededCurInstr < trace.length) { // NOP anyways if preseededCurInstr is 0
-                startingInstruction = preseededCurInstr;
-                preseededCurInstr = null;
-              }
+                // forceStartingInstr overrides everything else
+                if (forceStartingInstr !== undefined) {
+                  startingInstruction = forceStartingInstr;
+                }
 
-              myVisualizer = new ExecutionVisualizer('pyOutputPane',
-                                                     dataFromBackend,
-                                                     {startingInstruction:  startingInstruction,
-                                                      updateOutputCallback: function() {$('#urlOutput').val('');}
-                                                     });
+                myVisualizer = new ExecutionVisualizer('pyOutputPane',
+                                                       dataFromBackend,
+                                                       {startingInstruction:  startingInstruction,
+                                                        updateOutputCallback: function() {$('#urlOutput,#embedCodeOutput').val('');},
+                                                        // tricky: selector 'true' and 'false' values are strings!
+                                                        disableHeapNesting: ($('#heapPrimitivesSelector').val() == 'true'),
+                                                        drawParentPointers: ($('#drawParentPointerSelector').val() == 'true'),
+                                                        textualMemoryLabels: ($('#textualMemoryLabelsSelector').val() == 'true'),
+                                                        showOnlyOutputs: ($('#showOnlyOutputsSelector').val() == 'true'),
+                                                        executeCodeWithRawInputFunc: executeCodeWithRawInput,
+
+                                                        // undocumented experimental modes:
+                                                        pyCrazyMode: ($('#pythonVersionSelector').val() == '2crazy'),
+                                                        //allowEditAnnotations: true,
+                                                       });
 
 
-              // set keyboard bindings
-              $(document).keydown(function(k) {
-                if (!keyStuckDown) {
+                // set keyboard bindings
+                // VERY IMPORTANT to clear and reset this every time or
+                // else the handlers might be bound multiple times
+                $(document).unbind('keydown');
+                $(document).keydown(function(k) {
                   if (k.keyCode == 37) { // left arrow
                     if (myVisualizer.stepBack()) {
                       k.preventDefault(); // don't horizontally scroll the display
-                      keyStuckDown = true;
                     }
                   }
                   else if (k.keyCode == 39) { // right arrow
                     if (myVisualizer.stepForward()) {
                       k.preventDefault(); // don't horizontally scroll the display
-                      keyStuckDown = true;
                     }
                   }
-                }
-              });
+                });
 
-              $(document).keyup(function(k) {
-                keyStuckDown = false;
-              });
+                // also scroll to top to make the UI more usable on smaller monitors
+                $(document).scrollTop(0);
 
+                $.bbq.pushState({ mode: 'display' }, 2 /* completely override other hash strings to keep URL clean */);
+              }
+            },
+            "json");
+  }
 
-              // also scroll to top to make the UI more usable on smaller monitors
-              $(document).scrollTop(0);
+  function executeCodeFromScratch() {
+    // reset these globals
+    rawInputLst = [];
 
-              $.bbq.pushState({ mode: 'display' }, 2 /* completely override other hash strings to keep URL clean */);
-            }
-          },
-          "json");
-  });
+    executeCode();
+  }
 
+  function executeCodeWithRawInput(rawInputStr, curInstr) {
+    enterDisplayNoFrillsMode();
+
+    // set some globals
+    rawInputLst.push(rawInputStr);
+
+    executeCode(curInstr);
+  }
+
+  $("#executeBtn").attr('disabled', false);
+  $("#executeBtn").click(executeCodeFromScratch);
 
 
   // canned examples
@@ -285,6 +348,11 @@ $(document).ready(function() {
 
   $("#mapExampleLink").click(function() {
     $.get("example-code/map.txt", setCodeMirrorVal);
+    return false;
+  });
+
+  $("#rawInputExampleLink").click(function() {
+    $.get("example-code/raw_input.txt", setCodeMirrorVal);
     return false;
   });
 
@@ -453,11 +521,29 @@ $(document).ready(function() {
     $("#aliasExampleLink").trigger('click');
   }
 
+  // parse query string options ...
   // ugh, ugly tristate due to the possibility of them being undefined
   var cumulativeState = $.bbq.getState('cumulative');
   if (cumulativeState !== undefined) {
     $('#cumulativeModeSelector').val(cumulativeState);
   }
+  var heapPrimitivesState = $.bbq.getState('heapPrimitives');
+  if (heapPrimitivesState !== undefined) {
+    $('#heapPrimitivesSelector').val(heapPrimitivesState);
+  }
+  var drawParentPointerState = $.bbq.getState('drawParentPointers');
+  if (drawParentPointerState !== undefined) {
+    $('#drawParentPointerSelector').val(drawParentPointerState);
+  }
+  var textRefsState = $.bbq.getState('textReferences');
+  if (textRefsState !== undefined) {
+    $('#textualMemoryLabelsSelector').val(textRefsState);
+  }
+  var showOnlyOutputsState = $.bbq.getState('showOnlyOutputs');
+  if (showOnlyOutputsState !== undefined) {
+    $('#showOnlyOutputsSelector').val(showOnlyOutputsState);
+  }
+
   var pyState = $.bbq.getState('py');
   if (pyState !== undefined) {
     $('#pythonVersionSelector').val(pyState);
@@ -480,10 +566,10 @@ $(document).ready(function() {
     }
   }
 
-  
+
   // log a generic AJAX error handler
   $(document).ajaxError(function() {
-    alert("Server error (possibly due to memory/resource overload).");
+    alert("Server error (possibly due to memory/resource overload). Report a bug to philip@pgbovine.net\n\n(Click the 'Generate URL' button to include a unique URL in your email bug report.)");
 
     $('#executeBtn').html("Visualize execution");
     $('#executeBtn').attr('disabled', false);
@@ -501,6 +587,10 @@ $(document).ready(function() {
     var myArgs = {code: pyInputCodeMirror.getValue(),
                   mode: appMode,
                   cumulative: $('#cumulativeModeSelector').val(),
+                  heapPrimitives: $('#heapPrimitivesSelector').val(),
+                  drawParentPointers: $('#drawParentPointerSelector').val(),
+                  textReferences: $('#textualMemoryLabelsSelector').val(),
+                  showOnlyOutputs: $('#showOnlyOutputsSelector').val(),
                   py: $('#pythonVersionSelector').val()};
 
     if (appMode == 'display') {
@@ -509,6 +599,24 @@ $(document).ready(function() {
 
     var urlStr = $.param.fragment(window.location.href, myArgs, 2 /* clobber all */);
     $('#urlOutput').val(urlStr);
+  });
+
+
+  $('#genEmbedBtn').bind('click', function() {
+    assert(appMode == 'display');
+    var myArgs = {code: pyInputCodeMirror.getValue(),
+                  cumulative: $('#cumulativeModeSelector').val(),
+                  heapPrimitives: $('#heapPrimitivesSelector').val(),
+                  drawParentPointers: $('#drawParentPointerSelector').val(),
+                  textReferences: $('#textualMemoryLabelsSelector').val(),
+                  showOnlyOutputs: $('#showOnlyOutputsSelector').val(),
+                  py: $('#pythonVersionSelector').val(),
+                  curInstr: myVisualizer.curInstr,
+                 };
+
+    var embedUrlStr = $.param.fragment('http://pythontutor.com/iframe-embed.html', myArgs, 2 /* clobber all */);
+    var iframeStr = '<iframe width="800" height="500" frameborder="0" src="' + embedUrlStr + '"> </iframe>';
+    $('#embedCodeOutput').val(iframeStr);
   });
 });
 

@@ -3,7 +3,7 @@
 Online Python Tutor
 https://github.com/pgbovine/OnlinePythonTutor/
 
-Copyright (C) 2010-2012 Philip J. Guo (philip@pgbovine.net)
+Copyright (C) 2010-2013 Philip J. Guo (philip@pgbovine.net)
 
 Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the
@@ -31,11 +31,16 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 <!-- requirements for pytutor.js -->
 <script type="text/javascript" src="js/d3.v2.min.js"></script>
-<script type="text/javascript" src="js/jquery-1.6.min.js"></script>
+<script type="text/javascript" src="js/jquery-1.8.2.min.js"></script>
 <script type="text/javascript" src="js/jquery.ba-bbq.min.js"></script> <!-- for handling back button and URL hashes -->
-<script type="text/javascript" src="js/jquery.jsPlumb-1.3.10-all-min.js "></script> <!-- for rendering SVG connectors -->
-<script type="text/javascript" src="js/jquery-ui-1.8.21.custom.min.js"></script> <!-- for sliders and other UI elements -->
-<link type="text/css" href="css/ui-lightness/jquery-ui-1.8.21.custom.css" rel="stylesheet" />
+<script type="text/javascript" src="js/jquery.jsPlumb-1.3.10-all-min.js "></script> <!-- for rendering SVG connectors
+                                                                                         DO NOT UPGRADE ABOVE 1.3.10 OR ELSE BREAKAGE WILL OCCUR -->
+<script type="text/javascript" src="js/jquery-ui-1.8.24.custom.min.js"></script> <!-- for sliders and other UI elements -->
+<link type="text/css" href="css/ui-lightness/jquery-ui-1.8.24.custom.css" rel="stylesheet" />
+
+<!-- for annotation bubbles -->
+<script type="text/javascript" src="js/jquery.qtip.min.js"></script>
+<link type="text/css" href="css/jquery.qtip.css" rel="stylesheet" />
 
 <script type="text/javascript" src="js/pytutor.js"></script>
 <link rel="stylesheet" href="css/pytutor.css"/>
@@ -52,6 +57,10 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   Otherwise things will break in weird ways when you have more than one visualization
   embedded within a webpage, due to multiple matches in the global namespace.
 
+
+- always use generateID to generate unique CSS IDs, or else things will break
+  when multiple ExecutionVisualizer instances are displayed on a webpage
+
 */
 
 
@@ -64,16 +73,37 @@ var curVisualizerID = 1; // global to uniquely identify each ExecutionVisualizer
 // dat is data returned by the Python Tutor backend consisting of two fields:
 //   code  - string of executed code
 //   trace - a full execution trace
-// params contains optional parameters, such as:
+//
+// params is an object containing optional parameters, such as:
 //   jumpToEnd - if non-null, jump to the very end of execution
 //   startingInstruction - the (zero-indexed) execution point to display upon rendering
-//   hideOutput - hide "Program output" and "Generate URL" displays
-//   codeDivHeight - maximum height of #pyCodeOutputDiv (in pixels)
-//   editCodeBaseURL - the base URL to visit when the user clicks 'Edit code'
-//   embeddedMode - make the widget narrower horizontally and disable breakpoints
+//   hideOutput - hide "Program output" display
+//   codeDivHeight - maximum height of #pyCodeOutputDiv (in integer pixels)
+//   codeDivWidth  - maximum width  of #pyCodeOutputDiv (in integer pixels)
+//   editCodeBaseURL - the base URL to visit when the user clicks 'Edit code' (if null, then 'Edit code' link hidden)
+//   allowEditAnnotations - allow user to edit per-step annotations (default: false)
+//   embeddedMode         - shortcut for hideOutput=true, allowEditAnnotations=false
+//   disableHeapNesting   - if true, then render all heap objects at the top level (i.e., no nested objects)
+//                          codeDivWidth=350, codeDivHeight=400
+//   drawParentPointers   - if true, then draw environment diagram parent pointers for all frames
+//                          WARNING: there are hard-to-debug MEMORY LEAKS associated with activating this option
+//   textualMemoryLabels  - render references using textual memory labels rather than as jsPlumb arrows.
+//                          this is good for slow browsers or when used with disableHeapNesting
+//                          to prevent "arrow overload"
+//   showOnlyOutputs      - show only program outputs and NOT internal data structures
 //   updateOutputCallback - function to call (with 'this' as parameter)
 //                          whenever this.updateOutput() is called
 //                          (BEFORE rendering the output display)
+//   heightChangeCallback - function to call (with 'this' as parameter)
+//                          whenever the HEIGHT of #dataViz changes
+//   verticalStack - if true, then stack code display ON TOP of visualization
+//                   (else place side-by-side)
+//   executeCodeWithRawInputFunc - function to call when you want to re-execute the given program
+//                                 with some new user input (somewhat hacky!)
+//   highlightLines - highlight current and previously executed lines (default: false)
+//   arrowLines     - draw arrows pointing to current and previously executed lines (default: true)
+//   pyCrazyMode    - run with Py2crazy, which provides expression-level
+//                    granularity instead of line-level granularity (HIGHLY EXPERIMENTAL!)
 function ExecutionVisualizer(domRootID, dat, params) {
   this.curInputCode = dat.code.rtrim(); // kill trailing spaces
   this.curTrace = dat.trace;
@@ -86,9 +116,74 @@ function ExecutionVisualizer(domRootID, dat, params) {
   // visualization to not show as much redundancy.
   this.curTrace = this.curTrace.filter(function(e) {return e.event != 'call';});
 
+  // if the final entry is raw_input or mouse_input, then trim it from the trace and
+  // set a flag to prompt for user input when execution advances to the
+  // end of the trace
+  if (this.curTrace.length > 0) {
+    var lastEntry = this.curTrace[this.curTrace.length - 1];
+    if (lastEntry.event == 'raw_input') {
+      this.promptForUserInput = true;
+      this.userInputPromptStr = lastEntry.prompt;
+      this.curTrace.pop() // kill last entry so that it doesn't get displayed
+    }
+    else if (lastEntry.event == 'mouse_input') {
+      this.promptForMouseInput = true;
+      this.userInputPromptStr = lastEntry.prompt;
+      this.curTrace.pop() // kill last entry so that it doesn't get displayed
+    }
+  }
+
   this.curInstr = 0;
 
   this.params = params;
+  if (!this.params) {
+    this.params = {}; // make it an empty object by default
+  }
+
+  var arrowLinesDef = (this.params.arrowLines !== undefined);
+  var highlightLinesDef = (this.params.highlightLines !== undefined);
+
+  if (!arrowLinesDef && !highlightLinesDef) {
+      // neither is set
+      this.params.highlightLines = false;
+      this.params.arrowLines = true;
+  }
+  else if (arrowLinesDef && highlightLinesDef) {
+      // both are set, so just use their set values
+  }
+  else if (arrowLinesDef) {
+      // only arrowLines set
+      this.params.highlightLines = !(this.params.arrowLines);
+  }
+  else {
+      // only highlightLines set
+      this.params.arrowLines = !(this.params.highlightLines);
+  }
+
+  // audible!
+  if (this.params.pyCrazyMode) {
+      this.params.arrowLines = this.params.highlightLines = false;
+  }
+
+  // David's original logic ...
+  /*
+  if (!this.params.arrowLines && !this.params.highlightLines) {
+      this.params.highlightLines = false;
+      this.params.arrowLines = true;
+  }
+  else if (this.params.arrowLines) {
+      this.params.arrowLines = (this.params.arrowLines == true);
+      this.params.highlightLines = !(this.params.arrowLines);
+  }
+  else if (this.params.highlightLines) {
+      this.params.highlightLines = (this.params.highlightLines == true);
+      this.params.arrowLines = !(this.params.highlightLines);
+  }
+  else {
+      this.params.arrowLines = (this.params.arrowLines == true);
+      this.params.highlightLines = (this.params.highlightLines == true);
+  }
+  */
 
   // needs to be unique!
   this.visualizerID = curVisualizerID;
@@ -99,6 +194,13 @@ function ExecutionVisualizer(domRootID, dat, params) {
   this.arrowOffsetY = undefined;
   this.codeRowHeight = undefined;
 
+  // avoid 'undefined' state
+  this.disableHeapNesting = (this.params.disableHeapNesting == true);
+  this.drawParentPointers = (this.params.drawParentPointers == true);
+  this.textualMemoryLabels = (this.params.textualMemoryLabels == true);
+  this.showOnlyOutputs = (this.params.showOnlyOutputs == true);
+
+  this.executeCodeWithRawInputFunc = this.params.executeCodeWithRawInputFunc;
 
   // cool, we can create a separate jsPlumb instance for each visualization:
   this.jsPlumbInstance = jsPlumb.getInstance({
@@ -129,6 +231,7 @@ function ExecutionVisualizer(domRootID, dat, params) {
   // the root elements for jQuery and D3 selections, respectively.
   // ALWAYS use these and never use naked $(__) or d3.select(__)
   this.domRoot = $('#' + domRootID);
+  this.domRoot.data("vis",this);  // bnm store a reference to this as div data for use later.
   this.domRootD3 = d3.select('#' + domRootID);
 
   // stick a new div.ExecutionVisualizer within domRoot and make that
@@ -151,6 +254,7 @@ function ExecutionVisualizer(domRootID, dat, params) {
   this.hasRendered = false;
 
   this.render(); // go for it!
+
 }
 
 
@@ -171,69 +275,115 @@ ExecutionVisualizer.prototype.render = function() {
 
   var myViz = this; // to prevent confusion of 'this' inside of nested functions
 
-  // TODO: make less gross!
-  this.domRoot.html(
-  '<table border="0" class="visualizer">\
-    <tr>\
-      <td valign="top" id="left_pane">\
-        <center>\
-          <div id="pyCodeOutputDiv"/>\
-          <div id="editCodeLinkDiv">\
-            <a id="editBtn">Edit code</a>\
-          </div>\
-          <div id="executionSlider"/>\
-          <div id="vcrControls">\
-            <button id="jmpFirstInstr", type="button">&lt;&lt; First</button>\
-            <button id="jmpStepBack", type="button">&lt; Back</button>\
-            <span id="curInstr">Step ? of ?</span>\
-            <button id="jmpStepFwd", type="button">Forward &gt;</button>\
-            <button id="jmpLastInstr", type="button">Last &gt;&gt;</button>\
-          </div>\
-          <div id="errorOutput"/>\
-        </center>\
-        <div id="legendDiv"/>\
-        <div id="progOutputs">\
-        Program output:<br/>\
-        <textarea id="pyStdout" cols="50" rows="13" wrap="off" readonly></textarea>\
-        </div>\
-      </td>\
-      <td valign="top">\
-        <div id="dataViz">\
-          <table id="stackHeapTable">\
-            <tr>\
-              <td id="stack_td">\
-                <div id="globals_area">\
-                </div>\
-                <div id="stack">\
-                </div>\
-              </td>\
-              <td id="heap_td">\
-                <div id="heap">\
-                </div>\
-              </td>\
-            </tr>\
-          </table>\
-        </div>\
-      </td>\
-    </tr>\
-  </table>');
+  var codeDisplayHTML =
+    '<div id="codeDisplayDiv">\
+       <div id="pyCodeOutputDiv"/>\
+       <div id="editCodeLinkDiv"><a id="editBtn">Edit code</a></div>\
+       <div id="executionSlider"/>\
+       <div id="vcrControls">\
+         <button id="jmpFirstInstr", type="button">&lt;&lt; First</button>\
+         <button id="jmpStepBack", type="button">&lt; Back</button>\
+         <span id="curInstr">Step ? of ?</span>\
+         <button id="jmpStepFwd", type="button">Forward &gt;</button>\
+         <button id="jmpLastInstr", type="button">Last &gt;&gt;</button>\
+       </div>\
+       <div id="errorOutput"/>\
+       <div id="legendDiv"/>\
+       <div id="stepAnnotationDiv">\
+         <textarea class="annotationText" id="stepAnnotationEditor" cols="60" rows="3"></textarea>\
+         <div class="annotationText" id="stepAnnotationViewer"></div>\
+       </div>\
+       <div id="annotateLinkDiv"><button id="annotateBtn" type="button">Annotate this step</button></div>\
+     </div>';
 
+  var outputsHTML =
+    '<div id="htmlOutputDiv"></div>\
+     <div id="progOutputs">\
+       Program output:<br/>\
+       <textarea id="pyStdout" cols="50" rows="10" wrap="off" readonly></textarea>\
+     </div>';
 
-  if (!this.params.embeddedMode) {
-    this.domRoot.find('#legendDiv')
-      .append('<svg id="prevLegendArrowSVG"/> line that has just executed')
-      .append('<p style="margin-top: 4px"><svg id="curLegendArrowSVG"/> next line to execute</p>');
+  var codeVizHTML =
+    '<div id="dataViz">\
+       <table id="stackHeapTable">\
+         <tr>\
+           <td id="stack_td">\
+             <div id="globals_area">\
+               <div id="stackHeader">Frames</div>\
+             </div>\
+             <div id="stack"></div>\
+           </td>\
+           <td id="heap_td">\
+             <div id="heap">\
+               <div id="heapHeader">Objects</div>\
+             </div>\
+           </td>\
+         </tr>\
+       </table>\
+     </div>';
 
-    myViz.domRootD3.select('svg#prevLegendArrowSVG')
-      .append('polygon')
-      .attr('points', SVG_ARROW_POLYGON)
-      .attr('fill', lightArrowColor);
+  var vizHeaderHTML =
+    '<div id="vizHeader">\
+       <textarea class="vizTitleText" id="vizTitleEditor" cols="60" rows="1"></textarea>\
+       <div class="vizTitleText" id="vizTitleViewer"></div>\
+       <textarea class="vizDescriptionText" id="vizDescriptionEditor" cols="75" rows="2"></textarea>\
+       <div class="vizDescriptionText" id="vizDescriptionViewer"></div>\
+    </div>';
 
-    myViz.domRootD3.select('svg#curLegendArrowSVG')
-      .append('polygon')
-      .attr('points', SVG_ARROW_POLYGON)
-      .attr('fill', darkArrowColor);
+  if (this.params.verticalStack) {
+    this.domRoot.html(vizHeaderHTML + '<table border="0" class="visualizer"><tr><td class="vizLayoutTd" id="vizLayoutTdFirst"">' +
+                      codeDisplayHTML + '</td></tr><tr><td class="vizLayoutTd" id="vizLayoutTdSecond">' +
+                      codeVizHTML + '</td></tr></table>');
   }
+  else {
+    this.domRoot.html(vizHeaderHTML + '<table border="0" class="visualizer"><tr><td class="vizLayoutTd" id="vizLayoutTdFirst">' +
+                      codeDisplayHTML + '</td><td class="vizLayoutTd" id="vizLayoutTdSecond">' +
+                      codeVizHTML + '</td></tr></table>');
+  }
+
+  if (this.showOnlyOutputs) {
+    myViz.domRoot.find('#dataViz').hide();
+    this.domRoot.find('#vizLayoutTdSecond').append(outputsHTML);
+
+    if (this.params.verticalStack) {
+      this.domRoot.find('#vizLayoutTdSecond').css('padding-top', '25px');
+    }
+    else {
+      this.domRoot.find('#vizLayoutTdSecond').css('padding-left', '25px');
+    }
+  }
+  else {
+    this.domRoot.find('#vizLayoutTdFirst').append(outputsHTML);
+  }
+
+  if (this.params.arrowLines) {
+      this.domRoot.find('#legendDiv')
+          .append('<svg id="prevLegendArrowSVG"/> line that has just executed')
+          .append('<p style="margin-top: 4px"><svg id="curLegendArrowSVG"/> next line to execute</p>');
+
+      myViz.domRootD3.select('svg#prevLegendArrowSVG')
+          .append('polygon')
+          .attr('points', SVG_ARROW_POLYGON)
+          .attr('fill', lightArrowColor);
+
+      myViz.domRootD3.select('svg#curLegendArrowSVG')
+          .append('polygon')
+          .attr('points', SVG_ARROW_POLYGON)
+          .attr('fill', darkArrowColor);
+  }
+  else if (this.params.highlightLines) {
+      myViz.domRoot.find('#legendDiv')
+          .append('<span class="highlight-legend highlight-prev">line that has just executed</span> ')
+          .append('<span class="highlight-legend highlight-cur">next line to execute</span>')
+  }
+  else if (this.params.pyCrazyMode) {
+      myViz.domRoot.find('#legendDiv')
+          .append('<a href="https://github.com/pgbovine/Py2crazy">Py2crazy</a> mode!')
+          .append(' Stepping through (roughly) each executed expression. Color codes:<p/>')
+          .append('<span class="pycrazy-highlight-prev">expression that just executed</span><br/>')
+          .append('<span class="pycrazy-highlight-cur">next expression to execute</span>');
+  }
+
 
   if (this.params.editCodeBaseURL) {
     var urlStr = $.param.fragment(this.params.editCodeBaseURL,
@@ -242,20 +392,93 @@ ExecutionVisualizer.prototype.render = function() {
     this.domRoot.find('#editBtn').attr('href', urlStr);
   }
   else {
+    this.domRoot.find('#editCodeLinkDiv').hide(); // just hide for simplicity!
     this.domRoot.find('#editBtn').attr('href', "#");
     this.domRoot.find('#editBtn').click(function(){return false;}); // DISABLE the link!
   }
 
+  if (this.params.allowEditAnnotations !== undefined) {
+    this.allowEditAnnotations = this.params.allowEditAnnotations;
+  }
+  else {
+    this.allowEditAnnotations = false;
+  }
+
+  if (this.params.pyCrazyMode !== undefined) {
+    this.pyCrazyMode = this.params.pyCrazyMode;
+  }
+  else {
+    this.pyCrazyMode = false;
+  }
+
+  this.domRoot.find('#stepAnnotationEditor').hide();
 
   if (this.params.embeddedMode) {
     this.params.hideOutput = true; // put this before hideOutput handler
 
-    this.domRoot.find('#executionSlider')
-      .css('width', '330px');
+    // don't override if they've already been set!
+    if (this.params.codeDivWidth === undefined) {
+      this.params.codeDivWidth = 350;
+    }
 
+    if (this.params.codeDivHeight === undefined) {
+      this.params.codeDivHeight = 400;
+    }
+
+    this.allowEditAnnotations = false;
+  }
+
+  myViz.editAnnotationMode = false;
+
+  if (this.allowEditAnnotations) {
+    var ab = this.domRoot.find('#annotateBtn');
+
+    ab.click(function() {
+      if (myViz.editAnnotationMode) {
+        myViz.enterViewAnnotationsMode();
+
+        myViz.domRoot.find("#jmpFirstInstr,#jmpLastInstr,#jmpStepBack,#jmpStepFwd,#executionSlider,#editCodeLinkDiv,#stepAnnotationViewer").show();
+        myViz.domRoot.find('#stepAnnotationEditor').hide();
+        ab.html('Annotate this step');
+      }
+      else {
+        myViz.enterEditAnnotationsMode();
+
+        myViz.domRoot.find("#jmpFirstInstr,#jmpLastInstr,#jmpStepBack,#jmpStepFwd,#executionSlider,#editCodeLinkDiv,#stepAnnotationViewer").hide();
+        myViz.domRoot.find('#stepAnnotationEditor').show();
+        ab.html('Done annotating');
+      }
+    });
+  }
+  else {
+    this.domRoot.find('#annotateBtn').hide();
+  }
+
+
+  // not enough room for these extra buttons ...
+  if (this.params.codeDivWidth &&
+      this.params.codeDivWidth < 470) {
     this.domRoot.find('#jmpFirstInstr').hide();
     this.domRoot.find('#jmpLastInstr').hide();
+  }
 
+  if (this.params.codeDivWidth) {
+    // set width once
+    this.domRoot.find('#codeDisplayDiv').width(
+      this.params.codeDivWidth);
+    // it will propagate to the slider
+  }
+
+  // enable left-right draggable pane resizer (originally from David Pritchard)
+  var syncStdoutWidth = function(event, ui){
+    $("#vizLayoutTdFirst #pyStdout").width(ui.size.width-2*parseInt($("#pyStdout").css("padding-left")));};
+  $('#codeDisplayDiv').resizable({handles:"e", resize: syncStdoutWidth});
+  syncStdoutWidth(null, {size: {width: $('#codeDisplayDiv').width()}});
+
+
+  if (this.params.codeDivHeight) {
+    this.domRoot.find('#pyCodeOutputDiv')
+      .css('max-height', this.params.codeDivHeight + 'px');
   }
 
 
@@ -267,12 +490,7 @@ ExecutionVisualizer.prototype.render = function() {
     + myViz.generateID('global_table') + '"></table></div>');
 
 
-  if (this.params && this.params.codeDivHeight) {
-    this.domRoot.find('#pyCodeOutputDiv').css('max-height', this.params.codeDivHeight);
-  }
-
-
-  if (this.params && this.params.hideOutput) {
+  if (this.params.hideOutput) {
     this.domRoot.find('#progOutputs').hide();
   }
 
@@ -337,7 +555,7 @@ ExecutionVisualizer.prototype.render = function() {
   });
 
 
-  if (this.params && this.params.startingInstruction) {
+  if (this.params.startingInstruction) {
     assert(0 <= this.params.startingInstruction &&
            this.params.startingInstruction < this.curTrace.length);
     this.curInstr = this.params.startingInstruction;
@@ -355,6 +573,211 @@ ExecutionVisualizer.prototype.render = function() {
   this.updateOutput();
 
   this.hasRendered = true;
+}
+
+
+ExecutionVisualizer.prototype.showVizHeaderViewMode = function() {
+  var titleVal = this.domRoot.find('#vizTitleEditor').val().trim();
+  var  descVal = this.domRoot.find('#vizDescriptionEditor').val().trim();
+
+  this.domRoot.find('#vizTitleEditor,#vizDescriptionEditor').hide();
+
+  if (!titleVal && !descVal) {
+    this.domRoot.find('#vizHeader').hide();
+  }
+  else {
+    this.domRoot.find('#vizHeader,#vizTitleViewer,#vizDescriptionViewer').show();
+    if (titleVal) {
+      this.domRoot.find('#vizTitleViewer').html(htmlsanitize(titleVal)); // help prevent HTML/JS injection attacks
+    }
+
+    if (descVal) {
+      this.domRoot.find('#vizDescriptionViewer').html(htmlsanitize(descVal)); // help prevent HTML/JS injection attacks
+    }
+  }
+}
+
+ExecutionVisualizer.prototype.showVizHeaderEditMode = function() {
+  this.domRoot.find('#vizHeader').show();
+
+  this.domRoot.find('#vizTitleViewer,#vizDescriptionViewer').hide();
+  this.domRoot.find('#vizTitleEditor,#vizDescriptionEditor').show();
+}
+
+
+ExecutionVisualizer.prototype.destroyAllAnnotationBubbles = function() {
+  var myViz = this;
+
+  // hopefully destroys all old bubbles and reclaims their memory
+  if (myViz.allAnnotationBubbles) {
+    $.each(myViz.allAnnotationBubbles, function(i, e) {
+      e.destroyQTip();
+    });
+  }
+
+  // remove this handler as well!
+  this.domRoot.find('#pyCodeOutputDiv').unbind('scroll');
+
+  myViz.allAnnotationBubbles = null;
+}
+
+ExecutionVisualizer.prototype.initStepAnnotation = function() {
+  var curEntry = this.curTrace[this.curInstr];
+  if (curEntry.stepAnnotation) {
+    this.domRoot.find("#stepAnnotationViewer").html(htmlsanitize(curEntry.stepAnnotation)); // help prevent HTML/JS injection attacks
+    this.domRoot.find("#stepAnnotationEditor").val(curEntry.stepAnnotation);
+  }
+  else {
+    this.domRoot.find("#stepAnnotationViewer").html('');
+    this.domRoot.find("#stepAnnotationEditor").val('');
+  }
+}
+
+ExecutionVisualizer.prototype.initAllAnnotationBubbles = function() {
+  var myViz = this;
+
+  // TODO: check for memory leaks
+  //console.log('initAllAnnotationBubbles');
+
+  myViz.destroyAllAnnotationBubbles();
+
+  var codelineIDs = [];
+  $.each(this.domRoot.find('#pyCodeOutput .cod'), function(i, e) {
+    codelineIDs.push($(e).attr('id'));
+  });
+
+  var heapObjectIDs = [];
+  $.each(this.domRoot.find('.heapObject'), function(i, e) {
+    heapObjectIDs.push($(e).attr('id'));
+  });
+
+  var variableIDs = [];
+  $.each(this.domRoot.find('.variableTr'), function(i, e) {
+    variableIDs.push($(e).attr('id'));
+  });
+
+  var frameIDs = [];
+  $.each(this.domRoot.find('.stackFrame'), function(i, e) {
+    frameIDs.push($(e).attr('id'));
+  });
+
+  myViz.allAnnotationBubbles = [];
+
+  $.each(codelineIDs, function(i,e) {myViz.allAnnotationBubbles.push(new AnnotationBubble(myViz, 'codeline', e));});
+  $.each(heapObjectIDs, function(i,e) {myViz.allAnnotationBubbles.push(new AnnotationBubble(myViz, 'object', e));});
+  $.each(variableIDs, function(i,e) {myViz.allAnnotationBubbles.push(new AnnotationBubble(myViz, 'variable', e));});
+  $.each(frameIDs, function(i,e) {myViz.allAnnotationBubbles.push(new AnnotationBubble(myViz, 'frame', e));});
+
+
+  this.domRoot.find('#pyCodeOutputDiv').scroll(function() {
+    $.each(myViz.allAnnotationBubbles, function(i, e) {
+      if (e.type == 'codeline') {
+        e.redrawCodelineBubble();
+      }
+    });
+  });
+
+  //console.log('initAllAnnotationBubbles', myViz.allAnnotationBubbles.length);
+}
+
+
+ExecutionVisualizer.prototype.enterViewAnnotationsMode = function() {
+  this.editAnnotationMode = false;
+  var curEntry = this.curTrace[this.curInstr];
+
+  // TODO: check for memory leaks!!!
+  var myViz = this;
+
+  if (!myViz.allAnnotationBubbles) {
+    if (curEntry.bubbleAnnotations) {
+      // If there is an existing annotations object, then initiate all annotations bubbles
+      // and display them in 'View' mode
+      myViz.initAllAnnotationBubbles();
+
+      $.each(myViz.allAnnotationBubbles, function(i, e) {
+        var txt = curEntry.bubbleAnnotations[e.domID];
+        if (txt) {
+          e.preseedText(txt);
+        }
+      });
+    }
+  }
+
+
+  if (myViz.allAnnotationBubbles) {
+    var curAnnotations = {};
+
+    $.each(myViz.allAnnotationBubbles, function(i, e) {
+      e.enterViewMode();
+
+      if (e.text) {
+        curAnnotations[e.domID] = e.text;
+      }
+    });
+
+    // Save annotations directly into the current trace entry as an 'annotations' object
+    // directly mapping domID -> text.
+    //
+    // NB: This scheme can break if the functions for generating domIDs are altered.
+    curEntry.bubbleAnnotations = curAnnotations;
+  }
+
+  var stepAnnotationEditorVal = myViz.domRoot.find("#stepAnnotationEditor").val().trim();
+  if (stepAnnotationEditorVal) {
+    curEntry.stepAnnotation = stepAnnotationEditorVal;
+  }
+  else {
+    delete curEntry.stepAnnotation; // go as far as to DELETE this field entirely
+  }
+
+  myViz.initStepAnnotation();
+
+  myViz.showVizHeaderViewMode();
+
+  // redraw all connectors and bubbles in new vertical position ..
+  myViz.redrawConnectors();
+  myViz.redrawAllAnnotationBubbles();
+}
+
+ExecutionVisualizer.prototype.enterEditAnnotationsMode = function() {
+  this.editAnnotationMode = true;
+
+  // TODO: check for memory leaks!!!
+  var myViz = this;
+
+  var curEntry = this.curTrace[this.curInstr];
+
+  if (!myViz.allAnnotationBubbles) {
+    myViz.initAllAnnotationBubbles();
+  }
+
+  $.each(myViz.allAnnotationBubbles, function(i, e) {
+    e.enterEditMode();
+  });
+
+
+  if (curEntry.stepAnnotation) {
+    myViz.domRoot.find("#stepAnnotationEditor").val(curEntry.stepAnnotation);
+  }
+  else {
+    myViz.domRoot.find("#stepAnnotationEditor").val('');
+  }
+
+
+  myViz.showVizHeaderEditMode();
+
+  // redraw all connectors and bubbles in new vertical position ..
+  myViz.redrawConnectors();
+  myViz.redrawAllAnnotationBubbles();
+}
+
+
+ExecutionVisualizer.prototype.redrawAllAnnotationBubbles = function() {
+  if (this.allAnnotationBubbles) {
+    $.each(this.allAnnotationBubbles, function(i, e) {
+      e.redrawBubble();
+    });
+  }
 }
 
 
@@ -417,6 +840,10 @@ ExecutionVisualizer.prototype.findNextBreakpoint = function() {
 ExecutionVisualizer.prototype.stepForward = function() {
   var myViz = this;
 
+  if (myViz.editAnnotationMode) {
+    return;
+  }
+
   if (myViz.curInstr < myViz.curTrace.length - 1) {
     // if there is a next breakpoint, then jump to it ...
     if (myViz.sortedBreakpointsList.length > 0) {
@@ -439,6 +866,10 @@ ExecutionVisualizer.prototype.stepForward = function() {
 // returns true if action successfully taken
 ExecutionVisualizer.prototype.stepBack = function() {
   var myViz = this;
+
+  if (myViz.editAnnotationMode) {
+    return;
+  }
 
   if (myViz.curInstr > 0) {
     // if there is a prev breakpoint, then jump to it ...
@@ -663,6 +1094,9 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
       if (i == 0) {
         return 'lineNo' + d.lineNumber;
       }
+      else {
+        return myViz.generateID('cod' + d.lineNumber); // make globally unique (within the page)
+      }
     })
     .html(function(d, i) {
       if (i == 0) {
@@ -675,22 +1109,23 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
 
   // create a left-most gutter td that spans ALL rows ...
   // (NB: valign="top" is CRUCIAL for this to work in IE)
-  myViz.domRoot.find('#pyCodeOutput tr:first')
-    .prepend('<td id="gutterTD" valign="top" rowspan="' + this.codeOutputLines.length + '"><svg id="leftCodeGutterSVG"/></td>');
+  if (myViz.params.arrowLines) {
+      myViz.domRoot.find('#pyCodeOutput tr:first')
+          .prepend('<td id="gutterTD" valign="top" rowspan="' + this.codeOutputLines.length + '"><svg id="leftCodeGutterSVG"/></td>');
 
-  // create prevLineArrow and curLineArrow
-  myViz.domRootD3.select('svg#leftCodeGutterSVG')
-    .append('polygon')
-    .attr('id', 'prevLineArrow')
-    .attr('points', SVG_ARROW_POLYGON)
-    .attr('fill', lightArrowColor);
+      // create prevLineArrow and curLineArrow
+      myViz.domRootD3.select('svg#leftCodeGutterSVG')
+          .append('polygon')
+          .attr('id', 'prevLineArrow')
+          .attr('points', SVG_ARROW_POLYGON)
+          .attr('fill', lightArrowColor);
 
-  myViz.domRootD3.select('svg#leftCodeGutterSVG')
-    .append('polygon')
-    .attr('id', 'curLineArrow')
-    .attr('points', SVG_ARROW_POLYGON)
-    .attr('fill', darkArrowColor);
-
+      myViz.domRootD3.select('svg#leftCodeGutterSVG')
+          .append('polygon')
+          .attr('id', 'curLineArrow')
+          .attr('points', SVG_ARROW_POLYGON)
+          .attr('fill', darkArrowColor);
+  }
 
   // 2012-09-05: Disable breakpoints for now to simplify UX
   /*
@@ -737,6 +1172,32 @@ ExecutionVisualizer.prototype.renderPyCodeOutput = function() {
 }
 
 
+// takes a string inputStr and returns an HTML version with
+// the characters from [highlightIndex, highlightIndex+extent) highlighted with
+// a span of class highlightCssClass
+function htmlWithHighlight(inputStr, highlightInd, extent, highlightCssClass) {
+  var prefix = '';
+  if (highlightInd > 0) {
+    prefix = inputStr.slice(0, highlightInd);
+  }
+
+  var highlightedChars = inputStr.slice(highlightInd, highlightInd + extent);
+
+  var suffix = '';
+  if (highlightInd + extent < inputStr.length) {
+    suffix = inputStr.slice(highlightInd + extent, inputStr.length);
+  }
+
+  // ... then set the current line to lineHTML
+  var lineHTML = htmlspecialchars(prefix) +
+      '<span class="' + highlightCssClass + '">' +
+      htmlspecialchars(highlightedChars) +
+      '</span>' +
+      htmlspecialchars(suffix);
+  return lineHTML;
+}
+
+
 // This function is called every time the display needs to be updated
 ExecutionVisualizer.prototype.updateOutput = function(smoothTransition) {
   var myViz = this; // to prevent confusion of 'this' inside of nested functions
@@ -752,17 +1213,34 @@ ExecutionVisualizer.prototype.updateOutput = function(smoothTransition) {
   }
 
 
+  // really nitpicky!!! gets the difference in width between the code display
+  // and the maximum width of its enclosing div
+  myViz.codeHorizontalOverflow = myViz.domRoot.find('#pyCodeOutput').width() - myViz.domRoot.find('#pyCodeOutputDiv').width();
+  // should always be positive
+  if (myViz.codeHorizontalOverflow < 0) {
+    myViz.codeHorizontalOverflow = 0;
+  }
+
+
+  // crucial resets for annotations (TODO: kludgy)
+  myViz.destroyAllAnnotationBubbles();
+  myViz.initStepAnnotation();
+
+
+  var prevDataVizHeight = myViz.domRoot.find('#dataViz').height();
+
+
   var gutterSVG = myViz.domRoot.find('svg#leftCodeGutterSVG');
 
   // one-time initialization of the left gutter
   // (we often can't do this earlier since the entire pane
   //  might be invisible and hence returns a height of zero or NaN
   //  -- the exact format depends on browser)
-  if (!myViz.leftGutterSvgInitialized) {
+  if (!myViz.leftGutterSvgInitialized && myViz.params.arrowLines) {
     // set the gutter's height to match that of its parent
     gutterSVG.height(gutterSVG.parent().height());
 
-    var firstRowOffsetY  = myViz.domRoot.find('table#pyCodeOutput tr:first').offset().top;
+    var firstRowOffsetY = myViz.domRoot.find('table#pyCodeOutput tr:first').offset().top;
 
     // first take care of edge case when there's only one line ...
     myViz.codeRowHeight = myViz.domRoot.find('table#pyCodeOutput td.cod:first').height();
@@ -788,9 +1266,11 @@ ExecutionVisualizer.prototype.updateOutput = function(smoothTransition) {
     myViz.leftGutterSvgInitialized = true;
   }
 
-  assert(myViz.arrowOffsetY !== undefined);
-  assert(myViz.codeRowHeight !== undefined);
-  assert(0 <= myViz.arrowOffsetY && myViz.arrowOffsetY <= myViz.codeRowHeight);
+  if (myViz.params.arrowLines) {
+      assert(myViz.arrowOffsetY !== undefined);
+      assert(myViz.codeRowHeight !== undefined);
+      assert(0 <= myViz.arrowOffsetY && myViz.arrowOffsetY <= myViz.codeRowHeight);
+  }
 
   // call the callback if necessary (BEFORE rendering)
   if (this.params.updateOutputCallback) {
@@ -800,6 +1280,12 @@ ExecutionVisualizer.prototype.updateOutput = function(smoothTransition) {
 
   var curEntry = this.curTrace[this.curInstr];
   var hasError = false;
+  // bnm  Render a question
+  if (curEntry.question) {
+      //alert(curEntry.question.text);
+
+      $('#'+curEntry.question.div).modal({position:["25%","50%"]});
+  }
 
   // render VCR controls:
   var totalInstrs = this.curTrace.length;
@@ -808,9 +1294,15 @@ ExecutionVisualizer.prototype.updateOutput = function(smoothTransition) {
 
   var vcrControls = myViz.domRoot.find("#vcrControls");
 
-  // to be user-friendly, if we're on the LAST instruction, print "Program terminated"
   if (isLastInstr) {
-    if (this.instrLimitReached) {
+    if (this.promptForUserInput || this.promptForMouseInput) {
+      vcrControls.find("#curInstr").html('<b><font color="' + brightRed + '">' + this.userInputPromptStr + '</font></b>');
+
+      // don't do smooth transition since prompt() is modal so it doesn't
+      // give the animation background thread time to run
+      smoothTransition = false;
+    }
+    else if (this.instrLimitReached) {
       vcrControls.find("#curInstr").html("Instruction limit reached");
     }
     else {
@@ -875,6 +1367,11 @@ ExecutionVisualizer.prototype.updateOutput = function(smoothTransition) {
     var curLineNumber = null;
     var prevLineNumber = null;
 
+    // only relevant if in myViz.pyCrazyMode
+    var prevColumn = undefined;
+    var prevExprStartCol = undefined;
+    var prevExprWidth = undefined;
+
     var curIsReturn = (curEntry.event == 'return');
     var prevIsReturn = false;
 
@@ -882,9 +1379,81 @@ ExecutionVisualizer.prototype.updateOutput = function(smoothTransition) {
     if (myViz.curInstr > 0) {
       prevLineNumber = myViz.curTrace[myViz.curInstr - 1].line;
       prevIsReturn = (myViz.curTrace[myViz.curInstr - 1].event == 'return');
+
+      if (myViz.pyCrazyMode) {
+        var p = myViz.curTrace[myViz.curInstr - 1];
+        prevColumn = p.column;
+        // if these don't exist, set reasonable defaults
+        prevExprStartCol = (p.expr_start_col !== undefined) ? p.expr_start_col : p.column;
+        prevExprWidth = (p.expr_width !== undefined) ? p.expr_width : 1;
+      }
     }
 
     curLineNumber = curEntry.line;
+
+    if (myViz.pyCrazyMode) {
+      var curColumn = curEntry.column;
+
+      // if these don't exist, set reasonable defaults
+      var curExprStartCol = (curEntry.expr_start_col !== undefined) ? curEntry.expr_start_col : curColumn;
+      var curExprWidth = (curEntry.expr_width !== undefined) ? curEntry.expr_width : 1;
+
+      var curLineInfo = myViz.codeOutputLines[curLineNumber - 1];
+      assert(curLineInfo.lineNumber == curLineNumber);
+      var codeAtLine = curLineInfo.text;
+
+      // shotgun approach: reset ALL lines to their natural (unbolded) state
+      $.each(myViz.codeOutputLines, function(i, e) {
+        var d = myViz.generateID('cod' + e.lineNumber);
+        myViz.domRoot.find('#' + d).html(htmlspecialchars(e.text));
+      });
+
+
+      // Three possible cases:
+      // 1. previous and current trace entries are on the SAME LINE
+      // 2. previous and current trace entries are on different lines
+      // 3. there is no previous trace entry
+
+      if (prevLineNumber == curLineNumber) {
+        var curLineHTML = '';
+
+        // tricky tricky!
+        // generate a combined line with both previous and current
+        // columns highlighted
+
+        for (var i = 0; i < codeAtLine.length; i++) {
+          var isCur = (curExprStartCol <= i) && (i < curExprStartCol + curExprWidth);
+          var isPrev = (prevExprStartCol <= i) && (i < prevExprStartCol + prevExprWidth);
+
+          var htmlEscapedChar = htmlspecialchars(codeAtLine[i]);
+
+          if (isCur && isPrev) {
+            curLineHTML += '<span class="pycrazy-highlight-prev-and-cur">' + htmlEscapedChar + '</span>';
+          }
+          else if (isPrev) {
+            curLineHTML += '<span class="pycrazy-highlight-prev">' + htmlEscapedChar + '</span>';
+          }
+          else if (isCur) {
+            curLineHTML += '<span class="pycrazy-highlight-cur">' + htmlEscapedChar + '</span>';
+          }
+          else {
+            curLineHTML += htmlEscapedChar;
+          }
+        }
+
+        assert(curLineHTML);
+        myViz.domRoot.find('#' + myViz.generateID('cod' + curLineNumber)).html(curLineHTML);
+      }
+      else {
+        if (prevLineNumber) {
+          var prevLineInfo = myViz.codeOutputLines[prevLineNumber - 1];
+          var prevLineHTML = htmlWithHighlight(prevLineInfo.text, prevExprStartCol, prevExprWidth, 'pycrazy-highlight-prev');
+          myViz.domRoot.find('#' + myViz.generateID('cod' + prevLineNumber)).html(prevLineHTML);
+        }
+        var curLineHTML = htmlWithHighlight(codeAtLine, curExprStartCol, curExprWidth, 'pycrazy-highlight-cur');
+        myViz.domRoot.find('#' + myViz.generateID('cod' + curLineNumber)).html(curLineHTML);
+      }
+    }
 
     // on 'return' events, give a bit more of a vertical nudge to show that
     // the arrow is aligned with the 'bottom' of the line ...
@@ -904,54 +1473,56 @@ ExecutionVisualizer.prototype.updateOutput = function(smoothTransition) {
       }
     }
 
-    if (prevLineNumber) {
-      var pla = myViz.domRootD3.select('#prevLineArrow');
-      var translatePrevCmd = 'translate(0, ' + (((prevLineNumber - 1) * myViz.codeRowHeight) + myViz.arrowOffsetY + prevVerticalNudge) + ')';
+    if (myViz.params.arrowLines) {
+        if (prevLineNumber) {
+            var pla = myViz.domRootD3.select('#prevLineArrow');
+            var translatePrevCmd = 'translate(0, ' + (((prevLineNumber - 1) * myViz.codeRowHeight) + myViz.arrowOffsetY + prevVerticalNudge) + ')';
 
-      if (smoothTransition) {
-        pla
-          .transition()
-          .duration(200)
-          .attr('fill', 'white')
-          .each('end', function() {
-            pla
-              .attr('transform', translatePrevCmd)
-              .attr('fill', lightArrowColor);
+            if (smoothTransition) {
+                pla
+                    .transition()
+                    .duration(200)
+                    .attr('fill', 'white')
+                    .each('end', function() {
+                        pla
+                            .attr('transform', translatePrevCmd)
+                            .attr('fill', lightArrowColor);
 
-            gutterSVG.find('#prevLineArrow').show(); // show at the end to avoid flickering
-          });
-      }
-      else {
-        pla.attr('transform', translatePrevCmd)
-        gutterSVG.find('#prevLineArrow').show();
-      }
+                        gutterSVG.find('#prevLineArrow').show(); // show at the end to avoid flickering
+                    });
+            }
+            else {
+                pla.attr('transform', translatePrevCmd)
+                gutterSVG.find('#prevLineArrow').show();
+            }
 
+        }
+        else {
+            gutterSVG.find('#prevLineArrow').hide();
+        }
+
+        if (curLineNumber) {
+            var cla = myViz.domRootD3.select('#curLineArrow');
+            var translateCurCmd = 'translate(0, ' + (((curLineNumber - 1) * myViz.codeRowHeight) + myViz.arrowOffsetY + curVerticalNudge) + ')';
+
+            if (smoothTransition) {
+                cla
+                    .transition()
+                    .delay(200)
+                    .duration(250)
+                    .attr('transform', translateCurCmd);
+            }
+            else {
+                cla.attr('transform', translateCurCmd);
+            }
+
+            gutterSVG.find('#curLineArrow').show();
+        }
+        else {
+            gutterSVG.find('#curLineArrow').hide();
+        }
     }
-    else {
-      gutterSVG.find('#prevLineArrow').hide();
-    }
-
-    if (curLineNumber) {
-      var cla = myViz.domRootD3.select('#curLineArrow');
-      var translateCurCmd = 'translate(0, ' + (((curLineNumber - 1) * myViz.codeRowHeight) + myViz.arrowOffsetY + curVerticalNudge) + ')';
-
-      if (smoothTransition) {
-        cla
-          .transition()
-          .delay(200)
-          .duration(250)
-          .attr('transform', translateCurCmd);
-      }
-      else {
-        cla.attr('transform', translateCurCmd);
-      }
-
-      gutterSVG.find('#curLineArrow').show();
-    }
-    else {
-      gutterSVG.find('#curLineArrow').hide();
-    }
-
+>>>>>>> upstream/master
 
     myViz.domRootD3.selectAll('#pyCodeOutputDiv td.cod')
       .style('border-top', function(d) {
@@ -999,12 +1570,22 @@ ExecutionVisualizer.prototype.updateOutput = function(smoothTransition) {
       pcod.animate({scrollTop: (ST + (LO - PO - (Math.round(H / 2))))}, 300);
     }
 
+    if (myViz.params.highlightLines) {
+        myViz.domRoot.find('#pyCodeOutputDiv td.cod').removeClass('highlight-prev');
+        myViz.domRoot.find('#pyCodeOutputDiv td.cod').removeClass('highlight-cur');
+        if (curLineNumber)
+            myViz.domRoot.find('#'+myViz.generateID('cod'+curLineNumber)).addClass('highlight-cur');
+        if (prevLineNumber)
+            myViz.domRoot.find('#'+myViz.generateID('cod'+prevLineNumber)).addClass('highlight-prev');
+    }
+
 
     // smoothly scroll code display
     if (!isOutputLineVisible(curEntry.line)) {
       scrollCodeOutputToLine(curEntry.line);
     }
-  }
+
+  } // end of highlightCodeLine
 
 
   // render code output:
@@ -1012,28 +1593,75 @@ ExecutionVisualizer.prototype.updateOutput = function(smoothTransition) {
     highlightCodeLine();
   }
 
-
   // render stdout:
 
-  // keep original horizontal scroll level:
-  var oldLeft = myViz.domRoot.find("#pyStdout").scrollLeft();
-  myViz.domRoot.find("#pyStdout").val(curEntry.stdout);
+  // if there isn't anything in curEntry.stdout, don't even bother
+  // displaying the pane
+  if (curEntry.stdout) {
+    this.domRoot.find('#progOutputs').show();
 
-  myViz.domRoot.find("#pyStdout").scrollLeft(oldLeft);
-  // scroll to bottom, though:
-  myViz.domRoot.find("#pyStdout").scrollTop(myViz.domRoot.find("#pyStdout")[0].scrollHeight);
+    // keep original horizontal scroll level:
+    var oldLeft = myViz.domRoot.find("#pyStdout").scrollLeft();
+    myViz.domRoot.find("#pyStdout").val(curEntry.stdout);
+
+    myViz.domRoot.find("#pyStdout").scrollLeft(oldLeft);
+    // scroll to bottom, though:
+    myViz.domRoot.find("#pyStdout").scrollTop(myViz.domRoot.find("#pyStdout")[0].scrollHeight);
+  }
+  else {
+    this.domRoot.find('#progOutputs').hide();
+  }
+
+
+  // inject user-specified HTML/CSS/JS output:
+  // YIKES -- HUGE CODE INJECTION VULNERABILITIES :O
+  myViz.domRoot.find("#htmlOutputDiv").empty();
+  if (curEntry.html_output) {
+    if (curEntry.css_output) {
+      myViz.domRoot.find("#htmlOutputDiv").append('<style type="text/css">' + curEntry.css_output + '</style>');
+    }
+    myViz.domRoot.find("#htmlOutputDiv").append(curEntry.html_output);
+
+    // inject and run JS *after* injecting HTML and CSS
+    if (curEntry.js_output) {
+      // NB: when jQuery injects JS, it executes the code immediately
+      // and then removes the entire <script> block from the DOM
+      // http://stackoverflow.com/questions/610995/jquery-cant-append-script-element
+      myViz.domRoot.find("#htmlOutputDiv").append('<script type="text/javascript">' + curEntry.js_output + '</script>');
+    }
+  }
 
 
   // finally, render all of the data structures
   this.renderDataStructures();
 
-  // Make sure that connectors in other embedded visualizations move.
-  if (myViz.domRoot[0].offsetHeight != startingHeight) {
-    // Prevent future shrinking
-    myViz.domRoot[0].style.minHeight = myViz.domRoot[0].offsetHeight + "px";
-    globalRepaintEverything();
+  this.enterViewAnnotationsMode(); // ... and render optional annotations (if any exist)
+
+
+  // call the callback if necessary (BEFORE rendering)
+  if (myViz.domRoot.find('#dataViz').height() != prevDataVizHeight) {
+    if (this.params.heightChangeCallback) {
+      this.params.heightChangeCallback(this);
+    }
   }
-}
+
+
+  if (isLastInstr && this.executeCodeWithRawInputFunc) {
+    if (this.promptForUserInput) {
+      // blocking prompt dialog!
+      // put a default string of '' or else it looks ugly in IE
+      var userInput = prompt(this.userInputPromptStr, '');
+
+      // if you hit 'Cancel' in prompt(), it returns null
+      if (userInput !== null) {
+        // after executing, jump back to this.curInstr to give the
+        // illusion of continuity
+        this.executeCodeWithRawInputFunc(userInput, this.curInstr);
+      }
+    }
+  }
+
+} // end of updateOutput
 
 var globalJSPlumbs = []
 function globalRepaintEverything() {
@@ -1116,13 +1744,16 @@ ExecutionVisualizer.prototype.precomputeCurTraceLayouts = function() {
 
 
     function recurseIntoObject(id, curRow, newRow) {
+      //console.log('recurseIntoObject', id,
+      //            $.extend(true /* make a deep copy */ , [], curRow),
+      //            $.extend(true /* make a deep copy */ , [], newRow));
 
       // heuristic for laying out 1-D linked data structures: check for enclosing elements that are
       // structurally identical and then lay them out as siblings in the same "row"
       var heapObj = curEntry.heap[id];
       assert(heapObj);
 
-      if (heapObj[0] == 'LIST' || heapObj[0] == 'TUPLE') {
+      if (heapObj[0] == 'LIST' || heapObj[0] == 'TUPLE' || heapObj[0] == 'SET') {
         $.each(heapObj, function(ind, child) {
           if (ind < 1) return; // skip type tag
 
@@ -1138,27 +1769,47 @@ ExecutionVisualizer.prototype.precomputeCurTraceLayouts = function() {
         $.each(heapObj, function(ind, child) {
           if (ind < 1) return; // skip type tag
 
+          if (myViz.disableHeapNesting) {
+            var dictKey = child[0];
+            if (!isPrimitiveType(dictKey)) {
+              var keyChildID = getRefID(dictKey);
+              updateCurLayout(keyChildID, [], []);
+            }
+          }
+
           var dictVal = child[1];
           if (!isPrimitiveType(dictVal)) {
             var childID = getRefID(dictVal);
             if (structurallyEquivalent(heapObj, curEntry.heap[childID])) {
               updateCurLayout(childID, curRow, newRow);
             }
+            else if (myViz.disableHeapNesting) {
+              updateCurLayout(childID, [], []);
+            }
           }
         });
       }
-      else if (heapObj[0] == 'INSTANCE') {
+      else if (heapObj[0] == 'INSTANCE' || heapObj[0] == 'CLASS') {
         jQuery.each(heapObj, function(ind, child) {
-          if (ind < 2) return; // skip type tag and class name
+          var headerLength = (heapObj[0] == 'INSTANCE') ? 2 : 3;
+          if (ind < headerLength) return;
 
-          // instance keys are always strings, so no need to recurse
-          assert(typeof child[0] == "string");
+          if (myViz.disableHeapNesting) {
+            var instKey = child[0];
+            if (!isPrimitiveType(instKey)) {
+              var keyChildID = getRefID(instKey);
+              updateCurLayout(keyChildID, [], []);
+            }
+          }
 
           var instVal = child[1];
           if (!isPrimitiveType(instVal)) {
             var childID = getRefID(instVal);
             if (structurallyEquivalent(heapObj, curEntry.heap[childID])) {
               updateCurLayout(childID, curRow, newRow);
+            }
+            else if (myViz.disableHeapNesting) {
+              updateCurLayout(childID, [], []);
             }
           }
         });
@@ -1335,21 +1986,33 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
   var curEntry = this.curTrace[this.curInstr];
   var curToplevelLayout = this.curTraceLayouts[this.curInstr];
 
-
-  // Heap object rendering phase:
-
-
-  // This is VERY crude, but to prevent multiple redundant HEAP->HEAP
-  // connectors from being drawn with the same source and origin, we need to first
-  // DELETE ALL existing HEAP->HEAP connections, and then re-render all of
-  // them in each call to this function. The reason why we can't safely
-  // hold onto them is because there's no way to guarantee that the
-  // *__heap_pointer_src_<src id> IDs are consistent across execution points.
-  myViz.jsPlumbInstance.select().each(function(c) {
-    if (c.sourceId.match(heapPtrSrcRE)) {
-      myViz.jsPlumbInstance.detachAllConnections(c.sourceId);
+  // for simplicity (but sacrificing some performance), delete all
+  // connectors and redraw them from scratch. doing so avoids mysterious
+  // jsPlumb connector alignment issues when the visualizer's enclosing
+  // div contains, say, a "position: relative;" CSS tag
+  // (which happens in the IPython Notebook)
+  var existingConnectionEndpointIDs = d3.map();
+  myViz.jsPlumbInstance.select({scope: 'varValuePointer'}).each(function(c) {
+    // This is VERY crude, but to prevent multiple redundant HEAP->HEAP
+    // connectors from being drawn with the same source and origin, we need to first
+    // DELETE ALL existing HEAP->HEAP connections, and then re-render all of
+    // them in each call to this function. The reason why we can't safely
+    // hold onto them is because there's no way to guarantee that the
+    // *__heap_pointer_src_<src id> IDs are consistent across execution points.
+    //
+    // thus, only add to existingConnectionEndpointIDs if this is NOT heap->heap
+    if (!c.sourceId.match(heapPtrSrcRE)) {
+      existingConnectionEndpointIDs.set(c.sourceId, c.targetId);
     }
   });
+
+  var existingParentPointerConnectionEndpointIDs = d3.map();
+  myViz.jsPlumbInstance.select({scope: 'frameParentPointer'}).each(function(c) {
+    existingParentPointerConnectionEndpointIDs.set(c.sourceId, c.targetId);
+  });
+
+
+  // Heap object rendering phase:
 
 
   // Key:   CSS ID of the div element representing the stack frame variable
@@ -1365,6 +2028,9 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
   // particular call to renderDataStructures.
   var connectionEndpointIDs = d3.map();
   var heapConnectionEndpointIDs = d3.map(); // subset of connectionEndpointIDs for heap->heap connections
+
+  // analogous to connectionEndpointIDs, except for environment parent pointers
+  var parentPointerConnectionEndpointIDs = d3.map();
 
   var heap_pointer_src_id = 1; // increment this to be unique for each heap_pointer_src_*
 
@@ -1406,12 +2072,20 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
       .style('opacity', '0')
       .duration(500)
       .each('end', function() {
-        hrExit.remove();
+        hrExit
+          .each(function(d, idx) {
+            $(this).empty(); // crucial for garbage collecting jsPlumb connectors!
+          })
+          .remove();
         myViz.redrawConnectors();
       });
   }
   else {
-    hrExit.remove();
+    hrExit
+      .each(function(d, idx) {
+        $(this).empty(); // crucial for garbage collecting jsPlumb connectors!
+      })
+      .remove();
   }
 
 
@@ -1464,12 +2138,20 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
       .style('opacity', '0') /* fade out */
       .duration(500)
       .each('end', function() {
-        tlhExit.remove();
+        tlhExit
+          .each(function(d, idx) {
+            $(this).empty(); // crucial for garbage collecting jsPlumb connectors!
+          })
+          .remove();
         myViz.redrawConnectors();
       });
   }
   else {
-    tlhExit.remove();
+    tlhExit
+      .each(function(d, idx) {
+        $(this).empty(); // crucial for garbage collecting jsPlumb connectors!
+      })
+      .remove();
   }
 
 
@@ -1518,25 +2200,40 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
 
   function renderCompoundObject(objID, d3DomElement, isTopLevel) {
     if (!isTopLevel && renderedObjectIDs.has(objID)) {
-      // render jsPlumb arrow source since this heap object has already been rendered
-      // (or will be rendered soon)
-
-      // add a stub so that we can connect it with a connector later.
-      // IE needs this div to be NON-EMPTY in order to properly
-      // render jsPlumb endpoints, so that's why we add an "&nbsp;"!
-
       var srcDivID = myViz.generateID('heap_pointer_src_' + heap_pointer_src_id);
       heap_pointer_src_id++; // just make sure each source has a UNIQUE ID
-      d3DomElement.append('<div id="' + srcDivID + '">&nbsp;</div>');
 
       var dstDivID = myViz.generateID('heap_object_' + objID);
 
-      assert(!connectionEndpointIDs.has(srcDivID));
-      connectionEndpointIDs.set(srcDivID, dstDivID);
-      //console.log('HEAP->HEAP', srcDivID, dstDivID);
+      if (myViz.textualMemoryLabels) {
+        var labelID = srcDivID + '_text_label';
+        d3DomElement.append('<div class="objectIdLabel" id="' + labelID + '">id' + objID + '</div>');
 
-      assert(!heapConnectionEndpointIDs.has(srcDivID));
-      heapConnectionEndpointIDs.set(srcDivID, dstDivID);
+        myViz.domRoot.find('div#' + labelID).hover(
+          function() {
+            myViz.jsPlumbInstance.connect({source: labelID, target: dstDivID,
+                                           scope: 'varValuePointer'});
+          },
+          function() {
+            myViz.jsPlumbInstance.select({source: labelID}).detach();
+          });
+      }
+      else {
+        // render jsPlumb arrow source since this heap object has already been rendered
+        // (or will be rendered soon)
+
+        // add a stub so that we can connect it with a connector later.
+        // IE needs this div to be NON-EMPTY in order to properly
+        // render jsPlumb endpoints, so that's why we add an "&nbsp;"!
+        d3DomElement.append('<div id="' + srcDivID + '">&nbsp;</div>');
+
+        assert(!connectionEndpointIDs.has(srcDivID));
+        connectionEndpointIDs.set(srcDivID, dstDivID);
+        //console.log('HEAP->HEAP', srcDivID, dstDivID);
+
+        assert(!heapConnectionEndpointIDs.has(srcDivID));
+        heapConnectionEndpointIDs.set(srcDivID, dstDivID);
+      }
 
       return; // early return!
     }
@@ -1550,22 +2247,26 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
     d3DomElement.append('<div class="heapObject" id="' + heapObjID + '"></div>');
     d3DomElement = myViz.domRoot.find('#' + heapObjID);
 
-
     renderedObjectIDs.set(objID, 1);
 
     var obj = curEntry.heap[objID];
     assert($.isArray(obj));
 
+    // prepend the type label with a memory address label
+    var typeLabelPrefix = '';
+    if (myViz.textualMemoryLabels) {
+      typeLabelPrefix = 'id' + objID + ':';
+    }
 
     if (obj[0] == 'LIST' || obj[0] == 'TUPLE' || obj[0] == 'SET' || obj[0] == 'DICT') {
       var label = obj[0].toLowerCase();
 
       assert(obj.length >= 1);
       if (obj.length == 1) {
-        d3DomElement.append('<div class="typeLabel">empty ' + label + '</div>');
+        d3DomElement.append('<div class="typeLabel">' + typeLabelPrefix + 'empty ' + label + '</div>');
       }
       else {
-        d3DomElement.append('<div class="typeLabel">' + label + '</div>');
+        d3DomElement.append('<div class="typeLabel">' + typeLabelPrefix + label + '</div>');
         d3DomElement.append('<table class="' + label + 'Tbl"></table>');
         var tbl = d3DomElement.children('table');
 
@@ -1639,15 +2340,21 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
       assert(obj.length >= headerLength);
 
       if (isInstance) {
-        d3DomElement.append('<div class="typeLabel">' + obj[1] + ' instance</div>');
+        d3DomElement.append('<div class="typeLabel">' + typeLabelPrefix + obj[1] + ' instance</div>');
       }
       else {
         var superclassStr = '';
         if (obj[2].length > 0) {
           superclassStr += ('[extends ' + obj[2].join(', ') + '] ');
         }
-        d3DomElement.append('<div class="typeLabel">' + obj[1] + ' class ' + superclassStr + '</div>');
+        d3DomElement.append('<div class="typeLabel">' + typeLabelPrefix + obj[1] + ' class ' + superclassStr + '</div>');
       }
+
+      // right now, let's NOT display class members, since that clutters
+      // up the display too much. in the future, consider displaying
+      // class members in a pop-up pane on mouseover or mouseclick
+      // actually nix what i just said above ...
+      //if (!isInstance) return;
 
       if (obj.length > headerLength) {
         var lab = isInstance ? 'inst' : 'class';
@@ -1665,14 +2372,27 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
           var valTd = newRow.find('td:last');
 
           // the keys should always be strings, so render them directly (and without quotes):
-          assert(typeof kvPair[0] == "string");
-          var attrnameStr = htmlspecialchars(kvPair[0]);
-          keyTd.append('<span class="keyObj">' + attrnameStr + '</span>');
+          // (actually this isn't the case when strings are rendered on the heap)
+          if (typeof kvPair[0] == "string") {
+            // common case ...
+            var attrnameStr = htmlspecialchars(kvPair[0]);
+            keyTd.append('<span class="keyObj">' + attrnameStr + '</span>');
+          }
+          else {
+            // when strings are rendered as heap objects ...
+            renderNestedObject(kvPair[0], keyTd);
+          }
 
           // values can be arbitrary objects, so recurse:
           renderNestedObject(kvPair[1], valTd);
         });
       }
+    }
+    else if (obj[0] == 'INSTANCE_PPRINT') {
+      d3DomElement.append('<div class="typeLabel">' + typeLabelPrefix + obj[1] + ' instance</div>');
+
+      strRepr = htmlspecialchars(obj[2]); // escape strings!
+      d3DomElement.append('<table class="customObjTbl"><tr><td class="customObjElt">' + strRepr + '</td></tr></table>');
     }
     else if (obj[0] == 'FUNCTION') {
       assert(obj.length == 3);
@@ -1681,12 +2401,25 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
       var funcName = htmlspecialchars(obj[1]).replace('&lt;lambda&gt;', '\u03bb');
       var parentFrameID = obj[2]; // optional
 
+      d3DomElement.append('<div class="typeLabel">' + typeLabelPrefix + 'function</div>');
+
       if (parentFrameID) {
         d3DomElement.append('<div class="funcObj">func ' + funcName + ' [parent=f'+ parentFrameID + ']</div>');
       }
       else {
         d3DomElement.append('<div class="funcObj">func ' + funcName + '</div>');
       }
+    }
+    else if (obj[0] == 'HEAP_PRIMITIVE') {
+      assert(obj.length == 3);
+
+      var typeName = obj[1];
+      var primitiveVal = obj[2];
+
+      // add a bit of padding to heap primitives, for aesthetics
+      d3DomElement.append('<div class="heapPrimitive"></div>');
+      d3DomElement.find('div.heapPrimitive').append('<div class="typeLabel">' + typeLabelPrefix + typeName + '</div>');
+      renderPrimitiveObject(primitiveVal, d3DomElement.find('div.heapPrimitive'));
     }
     else {
       // render custom data type
@@ -1697,7 +2430,7 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
 
       strRepr = htmlspecialchars(strRepr); // escape strings!
 
-      d3DomElement.append('<div class="typeLabel">' + typeName + '</div>');
+      d3DomElement.append('<div class="typeLabel">' + typeLabelPrefix + typeName + '</div>');
       d3DomElement.append('<table class="customObjTbl"><tr><td class="customObjElt">' + strRepr + '</td></tr></table>');
     }
   }
@@ -1736,11 +2469,14 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
 
 
 
+  // TODO: coalesce code for rendering globals and stack frames,
+  // since there's so much copy-and-paste grossness right now
+
   // render all global variables IN THE ORDER they were created by the program,
   // in order to ensure continuity:
 
-  // Derive a list where each element contains a pair of
-  // [varname, value] as long as value is NOT undefined.
+  // Derive a list where each element contains varname
+  // as long as value is NOT undefined.
   // (Sometimes entries in curEntry.ordered_globals are undefined,
   // so filter those out.)
   var realGlobalsLst = [];
@@ -1749,90 +2485,110 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
 
     // (use '!==' to do an EXACT match against undefined)
     if (val !== undefined) { // might not be defined at this line, which is OKAY!
-      realGlobalsLst.push([varname, varname]); /* purposely map varname down both columns */
+      realGlobalsLst.push(varname);
     }
   });
 
   var globalsID = myViz.generateID('globals');
   var globalTblID = myViz.generateID('global_table');
 
-  var globalsD3 = myViz.domRootD3.select('#' + globalTblID)
+  var globalVarTable = myViz.domRootD3.select('#' + globalTblID)
     .selectAll('tr')
-    .data(realGlobalsLst, function(d) {
-      return d[0]; // use variable name as key
+    .data(realGlobalsLst,
+          function(d) {return d;} // use variable name as key
+    );
+
+  globalVarTable
+    .enter()
+    .append('tr')
+    .attr('class', 'variableTr')
+    .attr('id', function(d, i) {
+        return myViz.generateID(varnameToCssID('global__' + d + '_tr')); // make globally unique (within the page)
     });
 
 
-  // ENTER
-  globalsD3.enter()
-    .append('tr')
+  var globalVarTableCells = globalVarTable
     .selectAll('td.stackFrameVar,td.stackFrameValue')
-    .data(function(d, i){return d;}) /* map varname down both columns */
-    .enter()
+    .data(function(d, i){return [d, d];}) /* map varname down both columns */
+
+  globalVarTableCells.enter()
     .append('td')
-    .attr('class', function(d, i) {return (i == 0) ? 'stackFrameVar' : 'stackFrameValue';})
-    .html(function(d, i) {
-      return (i == 0) ? d : '' /* initialize in each() later */;
-    })
+    .attr('class', function(d, i) {return (i == 0) ? 'stackFrameVar' : 'stackFrameValue';});
+
   // remember that the enter selection is added to the update
   // selection so that we can process it later ...
 
   // UPDATE
-  globalsD3
+  globalVarTableCells
     .order() // VERY IMPORTANT to put in the order corresponding to data elements
-    .selectAll('td')
-    .data(function(d, i){return d;}) /* map varname down both columns */
     .each(function(varname, i) {
-      if (i == 1) {
+      if (i == 0) {
+        $(this).html(varname);
+      }
+      else {
+        // always delete and re-render the global var ...
+        // NB: trying to cache and compare the old value using,
+        // say -- $(this).attr('data-curvalue', valStringRepr) -- leads to
+        // a mysterious and killer memory leak that I can't figure out yet
+        $(this).empty();
+
+        // make sure varname doesn't contain any weird
+        // characters that are illegal for CSS ID's ...
+        var varDivID = myViz.generateID('global__' + varnameToCssID(varname));
+
+        // need to get rid of the old connector in preparation for rendering a new one:
+        existingConnectionEndpointIDs.remove(varDivID);
+
         var val = curEntry.globals[varname];
+        if (isPrimitiveType(val)) {
+          renderPrimitiveObject(val, $(this));
+        }
+        else {
+          var heapObjID = myViz.generateID('heap_object_' + getRefID(val));
 
-        // include type in repr to prevent conflating integer 5 with string "5"
-        var valStringRepr = String(typeof val) + ':' + String(val);
-
-        // SUPER HACK - retrieve previous value as a hidden attribute
-        var prevValStringRepr = $(this).attr('data-curvalue');
-
-        // IMPORTANT! only clear the div and render a new element if the
-        // value has changed
-        if (valStringRepr != prevValStringRepr) {
-          // TODO: render a transition
-
-          $(this).empty(); // crude but effective for now
-
-          if (isPrimitiveType(val)) {
-            renderPrimitiveObject(val, $(this));
+          if (myViz.textualMemoryLabels) {
+            var labelID = varDivID + '_text_label';
+            $(this).append('<div class="objectIdLabel" id="' + labelID + '">id' + getRefID(val) + '</div>');
+            $(this).find('div#' + labelID).hover(
+              function() {
+                myViz.jsPlumbInstance.connect({source: labelID, target: heapObjID,
+                                               scope: 'varValuePointer'});
+              },
+              function() {
+                myViz.jsPlumbInstance.select({source: labelID}).detach();
+              });
           }
           else {
             // add a stub so that we can connect it with a connector later.
             // IE needs this div to be NON-EMPTY in order to properly
             // render jsPlumb endpoints, so that's why we add an "&nbsp;"!
-
-            // make sure varname doesn't contain any weird
-            // characters that are illegal for CSS ID's ...
-            var varDivID = myViz.generateID('global__' + varnameToCssID(varname));
             $(this).append('<div class="stack_pointer" id="' + varDivID + '">&nbsp;</div>');
 
             assert(!connectionEndpointIDs.has(varDivID));
-            var heapObjID = myViz.generateID('heap_object_' + getRefID(val));
             connectionEndpointIDs.set(varDivID, heapObjID);
             //console.log('STACK->HEAP', varDivID, heapObjID);
-
-            // GARBAGE COLLECTION GOTCHA! we need to get rid of the old
-            // connector in preparation for rendering a new one:
-            myViz.jsPlumbInstance.detachAllConnections(varDivID);
           }
-
-          //console.log('CHANGED', varname, prevValStringRepr, valStringRepr);
         }
-
-        // SUPER HACK - set current value as a hidden string attribute
-        $(this).attr('data-curvalue', valStringRepr);
       }
-
     });
 
-  // EXIT
-  globalsD3.exit()
+
+
+  globalVarTableCells.exit()
+    .each(function(d, idx) {
+      $(this).empty(); // crucial for garbage collecting jsPlumb connectors!
+    })
+    .remove();
+
+  globalVarTable.exit()
+    .each(function(d, i) {
+      // detach all stack_pointer connectors for divs that are being removed
+      $(this).find('.stack_pointer').each(function(i, sp) {
+        existingConnectionEndpointIDs.remove($(sp).attr('id'));
+      });
+
+      $(this).empty(); // crucial for garbage collecting jsPlumb connectors!
+    })
     .remove();
 
 
@@ -1863,7 +2619,59 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
     .attr('id', function(d, i) {return d.is_zombie ? myViz.generateID("zombie_stack" + i)
                                                    : myViz.generateID("stack" + i);
     })
-    //.each(function(frame, i) {console.log('NEW STACK FRAME', frame.unique_hash);})
+    // HTML5 custom data attributes
+    .attr('data-frame_id', function(frame, i) {return frame.frame_id;})
+    .attr('data-parent_frame_id', function(frame, i) {
+      return (frame.parent_frame_id_list.length > 0) ? frame.parent_frame_id_list[0] : null;
+    })
+    .each(function(frame, i) {
+      if (!myViz.drawParentPointers) {
+        return;
+      }
+      // only run if myViz.drawParentPointers is true ...
+
+      var my_CSS_id = $(this).attr('id');
+
+      //console.log(my_CSS_id, 'ENTER');
+
+      // render a parent pointer whose SOURCE node is this frame
+      // i.e., connect this frame to p, where this.parent_frame_id == p.frame_id
+      // (if this.parent_frame_id is null, then p is the global frame)
+      if (frame.parent_frame_id_list.length > 0) {
+        var parent_frame_id = frame.parent_frame_id_list[0];
+        // tricky turkey!
+        // ok this hack just HAPPENS to work by luck ... usually there will only be ONE frame
+        // that matches this selector, but sometimes multiple frames match, in which case the
+        // FINAL frame wins out (since parentPointerConnectionEndpointIDs is a map where each
+        // key can be mapped to only ONE value). it so happens that the final frame winning
+        // out looks "desirable" for some of the closure test cases that I've tried. but
+        // this code is quite brittle :(
+        myViz.domRoot.find('div#stack [data-frame_id=' + parent_frame_id + ']').each(function(i, e) {
+          var parent_CSS_id = $(this).attr('id');
+          //console.log('connect', my_CSS_id, parent_CSS_id);
+          parentPointerConnectionEndpointIDs.set(my_CSS_id, parent_CSS_id);
+        });
+      }
+      else {
+        // render a parent pointer to the global frame
+        //console.log('connect', my_CSS_id, globalsID);
+        // only do this if there are actually some global variables to display ...
+        if (curEntry.ordered_globals.length > 0) {
+          parentPointerConnectionEndpointIDs.set(my_CSS_id, globalsID);
+        }
+      }
+
+      // tricky turkey: render parent pointers whose TARGET node is this frame.
+      // i.e., for all frames f such that f.parent_frame_id == my_frame_id,
+      // connect f to this frame.
+      // (make sure not to confuse frame IDs with CSS IDs!!!)
+      var my_frame_id = frame.frame_id;
+      myViz.domRoot.find('div#stack [data-parent_frame_id=' + my_frame_id + ']').each(function(i, e) {
+        var child_CSS_id = $(this).attr('id');
+        //console.log('connect', child_CSS_id, my_CSS_id);
+        parentPointerConnectionEndpointIDs.set(child_CSS_id, my_CSS_id);
+      });
+    });
 
   sfdEnter
     .append('div')
@@ -1872,7 +2680,8 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
 
       // pretty-print lambdas and display other weird characters
       // (might contain '<' or '>' for weird names like <genexpr>)
-      var funcName = htmlspecialchars(frame.func_name).replace('&lt;lambda&gt;', '\u03bb');
+      var funcName = htmlspecialchars(frame.func_name).replace('&lt;lambda&gt;', '\u03bb')
+            .replace('\n', '<br/>');
 
       var headerLabel = funcName;
 
@@ -1888,7 +2697,7 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
       }
 
       return headerLabel;
-    })
+    });
 
   sfdEnter
     .append('table')
@@ -1911,16 +2720,19 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
   stackVarTable
     .enter()
     .append('tr')
-    .on('mouseover', highlightAliasedConnectors)
-    .on('mouseout',  unhighlightAllConnectors);
+    .attr('class', 'variableTr')
+    .attr('id', function(d, i) {
+        return myViz.generateID(varnameToCssID(d.frame.unique_hash + '__' + d.varname + '_tr')); // make globally unique (within the page)
+    });
+
 
   var stackVarTableCells = stackVarTable
     .selectAll('td.stackFrameVar,td.stackFrameValue')
-    .data(function(d, i) {return [d, d] /* map identical data down both columns */;})
+    .data(function(d, i) {return [d, d] /* map identical data down both columns */;});
 
   stackVarTableCells.enter()
     .append('td')
-    .attr('class', function(d, i) {return (i == 0) ? 'stackFrameVar' : 'stackFrameValue';})
+    .attr('class', function(d, i) {return (i == 0) ? 'stackFrameVar' : 'stackFrameValue';});
 
   stackVarTableCells
     .order() // VERY IMPORTANT to put in the order corresponding to data elements
@@ -1935,71 +2747,153 @@ ExecutionVisualizer.prototype.renderDataStructures = function() {
           $(this).html(varname);
       }
       else {
+        // always delete and re-render the stack var ...
+        // NB: trying to cache and compare the old value using,
+        // say -- $(this).attr('data-curvalue', valStringRepr) -- leads to
+        // a mysterious and killer memory leak that I can't figure out yet
+        $(this).empty();
+
+        // make sure varname and frame.unique_hash don't contain any weird
+        // characters that are illegal for CSS ID's ...
+        var varDivID = myViz.generateID(varnameToCssID(frame.unique_hash + '__' + varname));
+
+        // need to get rid of the old connector in preparation for rendering a new one:
+        existingConnectionEndpointIDs.remove(varDivID);
+
         var val = frame.encoded_locals[varname];
-
-        // include type in repr to prevent conflating integer 5 with string "5"
-        var valStringRepr = String(typeof val) + ':' + String(val);
-
-        // SUPER HACK - retrieve previous value as a hidden attribute
-        var prevValStringRepr = $(this).attr('data-curvalue');
-
-        // IMPORTANT! only clear the div and render a new element if the
-        // value has changed
-        if (valStringRepr != prevValStringRepr) {
-          // TODO: render a transition
-
-          $(this).empty(); // crude but effective for now
-
-          if (isPrimitiveType(val)) {
-            renderPrimitiveObject(val, $(this));
+        if (isPrimitiveType(val)) {
+          renderPrimitiveObject(val, $(this));
+        }
+        else {
+          var heapObjID = myViz.generateID('heap_object_' + getRefID(val));
+          if (myViz.textualMemoryLabels) {
+            var labelID = varDivID + '_text_label';
+            $(this).append('<div class="objectIdLabel" id="' + labelID + '">id' + getRefID(val) + '</div>');
+            $(this).find('div#' + labelID).hover(
+              function() {
+                myViz.jsPlumbInstance.connect({source: labelID, target: heapObjID,
+                                               scope: 'varValuePointer'});
+              },
+              function() {
+                myViz.jsPlumbInstance.select({source: labelID}).detach();
+              });
           }
           else {
             // add a stub so that we can connect it with a connector later.
             // IE needs this div to be NON-EMPTY in order to properly
             // render jsPlumb endpoints, so that's why we add an "&nbsp;"!
-
-            // make sure varname and frame.unique_hash don't contain any weird
-            // characters that are illegal for CSS ID's ...
-            var varDivID = myViz.generateID(varnameToCssID(frame.unique_hash + '__' + varname));
-
             $(this).append('<div class="stack_pointer" id="' + varDivID + '">&nbsp;</div>');
 
             assert(!connectionEndpointIDs.has(varDivID));
-            var heapObjID = myViz.generateID('heap_object_' + getRefID(val));
             connectionEndpointIDs.set(varDivID, heapObjID);
             //console.log('STACK->HEAP', varDivID, heapObjID);
-
-            // GARBAGE COLLECTION GOTCHA! we need to get rid of the old
-            // connector in preparation for rendering a new one:
-            myViz.jsPlumbInstance.detachAllConnections(varDivID);
           }
-
-          //console.log('CHANGED', frame.unique_hash, varname, prevValStringRepr, valStringRepr);
         }
-
-        // SUPER HACK - set current value as a hidden string attribute
-        $(this).attr('data-curvalue', valStringRepr);
       }
     });
 
 
-  stackVarTableCells.exit().remove();
+  stackVarTableCells.exit()
+    .each(function(d, idx) {
+      $(this).empty(); // crucial for garbage collecting jsPlumb connectors!
+    })
+   .remove();
 
-  stackVarTable.exit().remove();
+  stackVarTable.exit()
+    .each(function(d, i) {
+      $(this).find('.stack_pointer').each(function(i, sp) {
+        // detach all stack_pointer connectors for divs that are being removed
+        existingConnectionEndpointIDs.remove($(sp).attr('id'));
+      });
+
+      $(this).empty(); // crucial for garbage collecting jsPlumb connectors!
+    })
+    .remove();
 
   stackFrameDiv.exit()
-    //.each(function(frame, i) {console.log('DEL STACK FRAME', frame.unique_hash, i);})
+    .each(function(frame, i) {
+      $(this).find('.stack_pointer').each(function(i, sp) {
+        // detach all stack_pointer connectors for divs that are being removed
+        existingConnectionEndpointIDs.remove($(sp).attr('id'));
+      });
+
+      var my_CSS_id = $(this).attr('id');
+
+      //console.log(my_CSS_id, 'EXIT');
+
+      // Remove all pointers where either the source or destination end is my_CSS_id
+      existingParentPointerConnectionEndpointIDs.forEach(function(k, v) {
+        if (k == my_CSS_id || v == my_CSS_id) {
+          //console.log('remove EPP', k, v);
+          existingParentPointerConnectionEndpointIDs.remove(k);
+        }
+      });
+
+      $(this).empty(); // crucial for garbage collecting jsPlumb connectors!
+    })
     .remove();
 
 
-  // crap, we need to repaint all of the existing connectors in case their endpoints have shifted
-  // due to page elements shifting around :(
-  myViz.jsPlumbInstance.repaintEverything();
+  // NB: ugh, I'm not very happy about this hack, but it seems necessary
+  // for embedding within sophisticated webpages such as IPython Notebook
 
-  // finally add all the NEW connectors that have arisen in this call to renderDataStructures
-  connectionEndpointIDs.forEach(function(varID, valueID) {
-    myViz.jsPlumbInstance.connect({source: varID, target: valueID});
-  });
+  // delete all connectors. do this AS LATE AS POSSIBLE so that
+  // (presumably) the calls to $(this).empty() earlier in this function
+  // will properly garbage collect the connectors
+  //
+  // WARNING: for environment parent pointers, garbage collection doesn't seem to
+  // be working as intended :(
+  //
+  // I suspect that this is due to the fact that parent pointers are SIBLINGS
+  // of stackFrame divs and not children, so when stackFrame divs get destroyed,
+  // their associated parent pointers do NOT.)
+  myViz.jsPlumbInstance.reset();
+
+
+  // use jsPlumb scopes to keep the different kinds of pointers separated
+  function renderVarValueConnector(varID, valueID) {
+    myViz.jsPlumbInstance.connect({source: varID, target: valueID, scope: 'varValuePointer'});
+  }
+
+
+  var totalParentPointersRendered = 0;
+
+  function renderParentPointerConnector(srcID, dstID) {
+    // SUPER-DUPER-ugly hack since I can't figure out a cleaner solution for now:
+    // if either srcID or dstID no longer exists, then SKIP rendering ...
+    if ((myViz.domRoot.find('#' + srcID).length == 0) ||
+        (myViz.domRoot.find('#' + dstID).length == 0)) {
+      return;
+    }
+
+    //console.log('renderParentPointerConnector:', srcID, dstID);
+
+    myViz.jsPlumbInstance.connect({source: srcID, target: dstID,
+                                   anchors: ["LeftMiddle", "LeftMiddle"],
+
+                                   // 'horizontally offset' the parent pointers up so that they don't look as ugly ...
+                                   //connector: ["Flowchart", { stub: 9 + (6 * (totalParentPointersRendered + 1)) }],
+
+                                   // actually let's try a bezier curve ...
+                                   connector: [ "Bezier", { curviness: 45 }],
+
+                                   endpoint: ["Dot", {radius: 4}],
+                                   //hoverPaintStyle: {lineWidth: 1, strokeStyle: connectorInactiveColor}, // no hover colors
+                                   scope: 'frameParentPointer'});
+    totalParentPointersRendered++;
+  }
+
+  if (!myViz.textualMemoryLabels) {
+    // re-render existing connectors and then ...
+    existingConnectionEndpointIDs.forEach(renderVarValueConnector);
+    // add all the NEW connectors that have arisen in this call to renderDataStructures
+    connectionEndpointIDs.forEach(renderVarValueConnector);
+  }
+  // do the same for environment parent pointers
+  if (myViz.drawParentPointers) {
+    existingParentPointerConnectionEndpointIDs.forEach(renderParentPointerConnector);
+    parentPointerConnectionEndpointIDs.forEach(renderParentPointerConnector);
+  }
 
   /*
   myViz.jsPlumbInstance.select().each(function(c) {
@@ -2125,6 +3019,20 @@ function htmlspecialchars(str) {
   return str;
 }
 
+
+// same as htmlspecialchars except don't worry about expanding spaces or
+// tabs since we want proper word wrapping in divs.
+function htmlsanitize(str) {
+  if (typeof(str) == "string") {
+    str = str.replace(/&/g, "&amp;"); /* must do &amp; first */
+
+    str = str.replace(/</g, "&lt;");
+    str = str.replace(/>/g, "&gt;");
+  }
+  return str;
+}
+
+
 String.prototype.rtrim = function() {
   return this.replace(/\s*$/g, "");
 }
@@ -2178,7 +3086,7 @@ function structurallyEquivalent(obj1, obj2) {
       startingInd = 3;
     }
     else {
-      return false;
+      return false; // punt on all other types
     }
 
     var obj1fields = d3.map();
@@ -2209,3 +3117,355 @@ function getRefID(obj) {
   return obj[1];
 }
 
+
+// Annotation bubbles
+
+var qtipShared = {
+  show: {
+    ready: true, // show on document.ready instead of on mouseenter
+    delay: 0,
+    event: null,
+    effect: function() {$(this).show();}, // don't do any fancy fading because it screws up with scrolling
+  },
+  hide: {
+    fixed: true,
+    event: null,
+    effect: function() {$(this).hide();}, // don't do any fancy fading because it screws up with scrolling
+  },
+  style: {
+    classes: 'ui-tooltip-pgbootstrap', // my own customized version of the bootstrap style
+  },
+};
+
+
+// a speech bubble annotation to attach to:
+//   'codeline' - a line of code
+//   'frame'    - a stack frame
+//   'variable' - a variable within a stack frame
+//   'object'   - an object on the heap
+// (as determined by the 'type' param)
+//
+// domID is the ID of the element to attach to (without the leading '#' sign)
+function AnnotationBubble(parentViz, type, domID) {
+  this.parentViz = parentViz;
+
+  this.domID = domID;
+  this.hashID = '#' + domID;
+
+  this.type = type;
+
+  if (type == 'codeline') {
+    this.my = 'left center';
+    this.at = 'right center';
+  }
+  else if (type == 'frame') {
+    this.my = 'right center';
+    this.at = 'left center';
+  }
+  else if (type == 'variable') {
+    this.my = 'right center';
+    this.at = 'left center';
+  }
+  else if (type == 'object') {
+    this.my = 'bottom left';
+    this.at = 'top center';
+  }
+  else {
+    assert(false);
+  }
+
+  // possible states:
+  //   'invisible'
+  //   'edit'
+  //   'view'
+  //   'minimized'
+  //   'stub'
+  this.state = 'invisible';
+
+  this.text = ''; // the actual contents of the annotation bubble
+
+  this.qtipHidden = false; // is there a qtip object present but hidden? (TODO: kinda confusing)
+}
+
+AnnotationBubble.prototype.showStub = function() {
+  assert(this.state == 'invisible' || this.state == 'edit');
+  assert(this.text == '');
+
+  var myBubble = this; // to avoid name clashes with 'this' in inner scopes
+
+  // destroy then create a new tip:
+  this.destroyQTip();
+  $(this.hashID).qtip($.extend({}, qtipShared, {
+    content: ' ',
+    id: this.domID,
+    position: {
+      my: this.my,
+      at: this.at,
+      adjust: {
+        x: (myBubble.type == 'codeline' ? -6 : 0), // shift codeline tips over a bit for aesthetics
+      },
+      effect: null, // disable all cutesy animations
+    },
+    style: {
+      classes: 'ui-tooltip-pgbootstrap ui-tooltip-pgbootstrap-stub'
+    }
+  }));
+
+
+  $(this.qTipID())
+    .unbind('click') // unbind all old handlers
+    .click(function() {
+      myBubble.showEditor();
+    });
+
+  this.state = 'stub';
+}
+
+AnnotationBubble.prototype.showEditor = function() {
+  assert(this.state == 'stub' || this.state == 'view' || this.state == 'minimized');
+
+  var myBubble = this; // to avoid name clashes with 'this' in inner scopes
+
+  var ta = '<textarea class="bubbleInputText">' + this.text + '</textarea>';
+
+  // destroy then create a new tip:
+  this.destroyQTip();
+  $(this.hashID).qtip($.extend({}, qtipShared, {
+    content: ta,
+    id: this.domID,
+    position: {
+      my: this.my,
+      at: this.at,
+      adjust: {
+        x: (myBubble.type == 'codeline' ? -6 : 0), // shift codeline tips over a bit for aesthetics
+      },
+      effect: null, // disable all cutesy animations
+    }
+  }));
+
+
+  $(this.qTipContentID()).find('textarea.bubbleInputText')
+    // set handler when the textarea loses focus
+    .blur(function() {
+      myBubble.text = $(this).val().trim(); // strip all leading and trailing spaces
+
+      if (myBubble.text) {
+        myBubble.showViewer();
+      }
+      else {
+        myBubble.showStub();
+      }
+    })
+    .focus(); // grab focus so that the user can start typing right away!
+
+  this.state = 'edit';
+}
+
+
+AnnotationBubble.prototype.bindViewerClickHandler = function() {
+  var myBubble = this;
+
+  $(this.qTipID())
+    .unbind('click') // unbind all old handlers
+    .click(function() {
+      if (myBubble.parentViz.editAnnotationMode) {
+        myBubble.showEditor();
+      }
+      else {
+        myBubble.minimizeViewer();
+      }
+    });
+}
+
+AnnotationBubble.prototype.showViewer = function() {
+  assert(this.state == 'edit' || this.state == 'invisible');
+  assert(this.text); // must be non-empty!
+
+  var myBubble = this;
+  // destroy then create a new tip:
+  this.destroyQTip();
+  $(this.hashID).qtip($.extend({}, qtipShared, {
+    content: htmlsanitize(this.text), // help prevent HTML/JS injection attacks
+    id: this.domID,
+    position: {
+      my: this.my,
+      at: this.at,
+      adjust: {
+        x: (myBubble.type == 'codeline' ? -6 : 0), // shift codeline tips over a bit for aesthetics
+      },
+      effect: null, // disable all cutesy animations
+    }
+  }));
+
+  this.bindViewerClickHandler();
+  this.state = 'view';
+}
+
+
+AnnotationBubble.prototype.minimizeViewer = function() {
+  assert(this.state == 'view');
+
+  var myBubble = this;
+
+  $(this.hashID).qtip('option', 'content.text', ' '); //hack to "minimize" its size
+
+  $(this.qTipID())
+    .unbind('click') // unbind all old handlers
+    .click(function() {
+      if (myBubble.parentViz.editAnnotationMode) {
+        myBubble.showEditor();
+      }
+      else {
+        myBubble.restoreViewer();
+      }
+    });
+
+  this.state = 'minimized';
+}
+
+AnnotationBubble.prototype.restoreViewer = function() {
+  assert(this.state == 'minimized');
+  $(this.hashID).qtip('option', 'content.text', htmlsanitize(this.text)); // help prevent HTML/JS injection attacks
+  this.bindViewerClickHandler();
+  this.state = 'view';
+}
+
+// NB: actually DESTROYS the QTip object
+AnnotationBubble.prototype.makeInvisible = function() {
+  assert(this.state == 'stub' || this.state == 'edit');
+  this.destroyQTip();
+  this.state = 'invisible';
+}
+
+
+AnnotationBubble.prototype.destroyQTip = function() {
+  $(this.hashID).qtip('destroy');
+}
+
+AnnotationBubble.prototype.qTipContentID = function() {
+  return '#ui-tooltip-' + this.domID + '-content';
+}
+
+AnnotationBubble.prototype.qTipID = function() {
+  return '#ui-tooltip-' + this.domID;
+}
+
+
+AnnotationBubble.prototype.enterEditMode = function() {
+  assert(this.parentViz.editAnnotationMode);
+  if (this.state == 'invisible') {
+    this.showStub();
+
+    if (this.type == 'codeline') {
+      this.redrawCodelineBubble();
+    }
+  }
+}
+
+AnnotationBubble.prototype.enterViewMode = function() {
+  assert(!this.parentViz.editAnnotationMode);
+  if (this.state == 'stub') {
+    this.makeInvisible();
+  }
+  else if (this.state == 'edit') {
+    this.text = $(this.qTipContentID()).find('textarea.bubbleInputText').val().trim(); // strip all leading and trailing spaces
+
+    if (this.text) {
+      this.showViewer();
+
+      if (this.type == 'codeline') {
+        this.redrawCodelineBubble();
+      }
+    }
+    else {
+      this.makeInvisible();
+    }
+  }
+  else if (this.state == 'invisible') {
+    // this happens when, say, you first enter View Mode
+    if (this.text) {
+      this.showViewer();
+
+      if (this.type == 'codeline') {
+        this.redrawCodelineBubble();
+      }
+    }
+  }
+}
+
+AnnotationBubble.prototype.preseedText = function(txt) {
+  assert(this.state == 'invisible');
+  this.text = txt;
+}
+
+AnnotationBubble.prototype.redrawCodelineBubble = function() {
+  assert(this.type == 'codeline');
+
+  if (isOutputLineVisibleForBubbles(this.domID)) {
+    if (this.qtipHidden) {
+      $(this.hashID).qtip('show');
+    }
+    else {
+      $(this.hashID).qtip('reposition');
+    }
+
+    this.qtipHidden = false;
+  }
+  else {
+    $(this.hashID).qtip('hide');
+    this.qtipHidden = true;
+  }
+}
+
+AnnotationBubble.prototype.redrawBubble = function() {
+  $(this.hashID).qtip('reposition');
+}
+
+
+// NB: copy-and-paste from isOutputLineVisible with some minor tweaks
+function isOutputLineVisibleForBubbles(lineDivID) {
+  var pcod = $('#pyCodeOutputDiv');
+
+  var lineNoTd = $('#' + lineDivID);
+  var LO = lineNoTd.offset().top;
+
+  var PO = pcod.offset().top;
+  var ST = pcod.scrollTop();
+  var H = pcod.height();
+
+  // add a few pixels of fudge factor on the bottom end due to bottom scrollbar
+  return (PO <= LO) && (LO < (PO + H - 25));
+}
+
+
+// popup question dialog code from Brad Miller
+
+// inputId is the ID of the input element
+// divId is the div that containsthe visualizer
+// answer is a dotted form of an attribute that lives in the curEntry of the trace
+// So if we want to ask for the value of a global variable we would say 'globals.a'
+// this allows us do do curTrace[i].globals.a  But we do it in the loop below using the
+// [] operator.
+function traceQCheckMe(inputId, divId, answer) {
+   var vis = $("#"+divId).data("vis")
+   var i = vis.curInstr
+   var curEntry = vis.curTrace[i+1];
+   var ans = $('#'+inputId).val()
+   var attrs = answer.split(".")
+   var correctAns = curEntry;
+   for (j in attrs) {
+       correctAns = correctAns[attrs[j]]
+   }
+   feedbackElement = $("#" + divId + "_feedbacktext")
+   if (ans.length > 0 && ans == correctAns) {
+       feedbackElement.html('Correct')
+   } else {
+       feedbackElement.html(vis.curTrace[i].question.feedback)
+   }
+
+}
+
+function closeModal(divId) {
+    $.modal.close()
+    $("#"+divId).data("vis").stepForward();
+}
